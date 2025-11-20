@@ -1,0 +1,12 @@
+{
+  "SUCCESS_BOOKINGS_FETCHED": "የቦኪንግ መረጃ በተሳካ ሁኔታ ተመልሷል።",
+  "ERROR_NO_BOOKINGS_FOUND": "ለዚህ ነጋዴ የቦኪንግ መረጃ አልተገኘም።",
+  "SUCCESS_PROPERTY_FETCHED": "የንብረት መረጃ በተሳካ ሁኔታ ተመልሷል።",
+  "ERROR_NO_PROPERTY_FOUND": "ለዚህ ነጋዴ የተመዘገበ ንብረት አልተገኘም።",
+  "SUCCESS_PROPERTY_UPDATED": "ንብረቱ በተሳካ ሁኔታ ተዘምኗል።",
+  "ERROR_PROPERTY_NOT_FOUND": "የተጠየቀው ንብረት አልተገኘም።",
+  "SUCCESS_PROPERTY_DELETED": "ንብረቱ በተሳካ ሁኔታ ተሰርዟል።",
+  "SUCCESS_BOOKING_UPDATED": "የቦኪንግ ሁኔታ በተሳካ ሁኔታ ተዘምኗል።",
+  "SUCCESS_BOOKING_DELETED": "ቦኪንግ በተሳካ ሁኔታ ተሰርዟል።",
+  "ERROR_BOOKING_NOT_FOUND": "የተጠየቀው ቦኪንግ አልተገኘም።"
+}

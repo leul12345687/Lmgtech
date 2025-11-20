@@ -1,0 +1,8 @@
+{
+  "ERROR_REG_REQUIRED_FIELDS": "Madaallii barbaachisaa guutuu.",
+  "ERROR_EMAIL_EXISTS": "Imeelichi duraanii ni galmaa’e.",
+  "ERROR_INVALID_CREDENTIALS_INACTIVE": "Odeeffannoo dogoggoraa yookaan accountiin hin socho’u.",
+  "ERROR_INVALID_CREDENTIALS": "Imeelii yookaan jecha icciitii dogoggoraa.",
+  "SUCCESS_LOGIN": "Seensa milkaa’eera.",
+  "SUCCESS_REGISTER": "Admin milkaa’inaan galmaa’eera."
+}

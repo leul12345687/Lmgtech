@@ -1,0 +1,292 @@
+// src/customer/customer.service.ts (Consolidated Service - No DTO Imports)
+
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+  BadRequestException,
+  InternalServerErrorException,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import * as bcrypt from 'bcryptjs';
+import { JwtService } from '@nestjs/jwt';
+import { I18nService } from 'nestjs-i18n';
+
+import { User, UserDocument, UserRole } from '../schema/user.schema';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+
+// --- INTERFACES (Used internally for type definition) ---
+export interface ICustomerRegistrationPayload {
+  email: string;
+  password: string;
+  fullName: string;
+  phonenumber: number;
+  acountnumber: number;
+  address: string;
+  profilePictureFile?: Express.Multer.File;
+}
+
+export interface ICustomerLoginPayload {
+  email: string;
+  password: string;
+}
+
+export interface ICustomerLoginResponse {
+  token: string;
+  message: string;
+  customer: {
+    id: string;
+    email: string;
+    fullName: string;
+    phonenumber: number;
+    acountnumber: number;
+    address: string;
+    profilePictureUrl: string;
+    role: UserRole;
+  };
+}
+
+// Internal interface for Admin Update Payload (replaces imported DTO for type safety within service)
+interface IAdminUpdatePayload {
+  email?: string;
+  newPassword?: string;
+  fullName?: string;
+  phonenumber?: number;
+  acountnumber?: number;
+  address?: string;
+  isActive?: boolean;
+  [key: string]: any; // Allow other fields if necessary
+}
+// -----------------------------------------------------------------
+
+@Injectable()
+export class CustomerService {
+  private readonly logger = new Logger(CustomerService.name);
+
+  constructor(
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly jwtService: JwtService,
+    private readonly i18n: I18nService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
+
+  // ===========================================================
+  // 🟢 REGISTER CUSTOMER (PUBLIC)
+  // ===========================================================
+  async register(credentials: ICustomerRegistrationPayload, lang: string): Promise<ICustomerLoginResponse> {
+    this.logger.log('📥 [register] called');
+    const { email, password, fullName, phonenumber, acountnumber, address, profilePictureFile } = credentials;
+
+    if (!email || !password || !fullName || !phonenumber || !acountnumber || !address) {
+      const msg = await this.i18n.translate('customer.ERROR_REQUIRED_FIELDS', { lang });
+      throw new BadRequestException(msg);
+    }
+    const existingUser = await this.userModel.findOne({ email }).exec();
+    if (existingUser) {
+      const msg = await this.i18n.translate('customer.ERROR_EMAIL_EXISTS', { lang });
+      throw new ConflictException(msg);
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    let profilePictureUrl = '';
+
+    if (profilePictureFile) {
+      try {
+        profilePictureUrl = await this.cloudinaryService.uploadImage(profilePictureFile, 'customers');
+      } catch (error) {
+        this.logger.error('❌ Failed to upload profile picture:', error);
+        throw new InternalServerErrorException('Image upload failed.');
+      }
+    }
+
+    const newCustomer = await this.userModel.create({
+      email, password: hashedPassword, fullName, phonenumber, acountnumber, address, profilePictureUrl,
+      role: UserRole.CUSTOMER, isActive: true,
+    });
+
+    const token = this.generateToken(newCustomer._id, newCustomer.role);
+    const successMsg = await this.i18n.translate('customer.SUCCESS_REGISTER', { lang });
+
+    return {
+      token, message: successMsg,
+      customer: {
+        id: newCustomer._id.toString(), email: newCustomer.email, fullName: newCustomer.fullName, phonenumber: newCustomer.phonenumber,
+        acountnumber: newCustomer.acountnumber, address: newCustomer.address, profilePictureUrl: newCustomer.profilePictureUrl, role: newCustomer.role,
+      },
+    };
+  }
+
+  // ===========================================================
+  // 🟡 LOGIN CUSTOMER (PUBLIC)
+  // ===========================================================
+  async login(credentials: ICustomerLoginPayload, lang: string): Promise<ICustomerLoginResponse> {
+    this.logger.log('🔑 [login] called');
+    const { email, password } = credentials;
+
+    const customer = await this.userModel
+      .findOne({ email, role: UserRole.CUSTOMER, isActive: true })
+      .select('+password').exec();
+
+    const invalidMsg = await this.i18n.translate('customer.ERROR_INVALID_CREDENTIALS', { lang });
+
+    if (!customer || !customer.password) {
+      throw new UnauthorizedException(invalidMsg);
+    }
+
+    const isMatch = await bcrypt.compare(password, customer.password);
+    if (!isMatch) {
+      throw new UnauthorizedException(invalidMsg);
+    }
+
+    customer.lastLogin = new Date();
+    await customer.save();
+
+    const token = this.generateToken(customer._id, customer.role);
+    const successMsg = await this.i18n.translate('customer.SUCCESS_LOGIN', { lang });
+
+    return {
+      token, message: successMsg,
+      customer: {
+        id: customer._id.toString(), email: customer.email, fullName: customer.fullName, phonenumber: customer.phonenumber,
+        acountnumber: customer.acountnumber, address: customer.address, profilePictureUrl: customer.profilePictureUrl, role: customer.role,
+      },
+    };
+  }
+
+  // ===========================================================
+  // 🟣 FIND CUSTOMER BY ID (USED BY GUARDS/PROFILE)
+  // ===========================================================
+  async findById(id: string): Promise<User | null> {
+    try {
+      const objectId = new Types.ObjectId(id);
+      return await this.userModel.findById(objectId).exec();
+    } catch (error) {
+      return null;
+    }
+  }
+  
+  // ===========================================================
+  // 🛑 ADMIN: GET ALL CUSTOMERS
+  // ===========================================================
+  async findAllCustomers(lang: string) {
+    try {
+      const customers = await this.userModel
+        .find({ role: UserRole.CUSTOMER })
+        .select('-password').exec();
+
+      if (!customers.length) {
+        const msg = await this.i18n.translate('customer.ERROR_NO_CUSTOMERS_FOUND', { lang });
+        throw new NotFoundException(msg);
+      }
+
+      return {
+        message: await this.i18n.translate('customer.SUCCESS_CUSTOMERS_FETCHED', { lang }),
+        totalCustomers: customers.length,
+        customers: customers.map(c => ({
+          id: c._id.toString(), fullName: c.fullName, email: c.email, phonenumber: c.phonenumber,
+          address: c.address, isActive: c.isActive,
+        })),
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error; 
+      throw new InternalServerErrorException('Failed to fetch customers.');
+    }
+  }
+
+  // ===========================================================
+  // 🛑 ADMIN: UPDATE CUSTOMER (General Update and Password Reset)
+  // ===========================================================
+  async updateCustomerByAdmin(customerId: string, updateData: IAdminUpdatePayload, lang: string) {
+    try {
+      const customerObjectId = new Types.ObjectId(customerId);
+      
+      // Define allowed fields explicitly as DTO validation is not imported
+      const allowedFields = ['fullName', 'email', 'phonenumber', 'acountnumber', 'address', 'isActive', 'newPassword'];
+      const filteredUpdate: Record<string, any> = {};
+
+      for (const key of allowedFields) {
+        if (updateData[key] !== undefined) {
+          if (key !== 'newPassword') {
+            filteredUpdate[key] = updateData[key];
+          }
+        }
+      }
+
+      const newPassword = updateData.newPassword;
+      if (newPassword) {
+        if (typeof newPassword !== 'string' || newPassword.length < 8) {
+          const msg = await this.i18n.translate('customer.ERROR_PASSWORD_LENGTH', { lang });
+          throw new BadRequestException(msg);
+        }
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        filteredUpdate['password'] = hashedPassword;
+      }
+      
+      if (Object.keys(filteredUpdate).length === 0) {
+          const msg = await this.i18n.translate('customer.ERROR_NO_VALID_FIELDS', { lang });
+          throw new BadRequestException(msg);
+      }
+
+      const updatedCustomer = await this.userModel.findByIdAndUpdate(
+        customerObjectId,
+        { $set: filteredUpdate },
+        { new: true }
+      ).select('-password');
+
+      if (!updatedCustomer || updatedCustomer.role !== UserRole.CUSTOMER) {
+        const msg = await this.i18n.translate('customer.ERROR_CUSTOMER_NOT_FOUND', { lang });
+        throw new NotFoundException(msg);
+      }
+
+      return {
+        message: await this.i18n.translate('customer.SUCCESS_CUSTOMER_UPDATED', { lang }),
+        customer: {
+          id: updatedCustomer._id.toString(), fullName: updatedCustomer.fullName, email: updatedCustomer.email, isActive: updatedCustomer.isActive,
+        },
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+          throw error;
+      }
+      throw new InternalServerErrorException('Failed to update customer profile.');
+    }
+  }
+
+  // ===========================================================
+  // 🛑 ADMIN: DELETE CUSTOMER
+  // ===========================================================
+  async deleteCustomerByAdmin(customerId: string, lang: string) {
+    try {
+      const customerObjectId = new Types.ObjectId(customerId);
+
+      const deletedCustomer = await this.userModel.findOneAndDelete({
+        _id: customerObjectId, role: UserRole.CUSTOMER,
+      }).select('-password');
+
+      if (!deletedCustomer) {
+        const msg = await this.i18n.translate('customer.ERROR_CUSTOMER_NOT_FOUND', { lang });
+        throw new NotFoundException(msg);
+      }
+      // TODO: Add logic here to delete related data (e.g., bookings, Cloudinary image)
+
+      return {
+        message: await this.i18n.translate('customer.SUCCESS_CUSTOMER_DELETED', { lang }),
+        deletedCustomerId: customerId,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new InternalServerErrorException('Failed to delete customer.');
+    }
+  }
+
+  // ===========================================================
+  // ⚙️ PRIVATE: GENERATE TOKEN
+  // ===========================================================
+  private generateToken(userId: Types.ObjectId, role: UserRole): string {
+    const payload = { sub: userId, role };
+    return this.jwtService.sign(payload);
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "ERROR_REQUIRED_FIELDS": "የንብረት ዝርዝሮች ሁሉ (የዋጋ መለኪያ፣ ዋጋዎች እና የንብረቶች ብዛት ጨምሮ) እና ቢያንስ አንድ የፎቶ ምስል መሞላት አለበት።",
+  "ERROR_IMAGE_REQUIRED": "ቢያንስ አንድ የንብረት ምስል ያስፈልጋል።",
+  "SUCCESS_PROPERTY_CREATED": "ንብረቱ በተሳካ ሁኔታ ተፈጥሯል።",
+   "SUCCESS_PROPERTIES_FETCHED": "ንብረቶች በትክክል ተወሰዱ።",
+    "SUCCESS_PROPERTY_UPDATED": "ንብረቱ በትክክል ተሻሽሏል።",
+    "SUCCESS_PROPERTY_DELETED": "ንብረቱ በትክክል ተሰርዟል።",
+    "ERROR_NO_PROPERTY_FOUND": "ንብረቱ አልተገኘም።"
+}

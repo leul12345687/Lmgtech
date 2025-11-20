@@ -1,0 +1,13 @@
+{
+  "ERROR_REQUIRED_FIELDS": "All required fields must be provided.",
+  "ERROR_EMAIL_EXISTS": "This email is already registered. Please use another one.",
+  "ERROR_INVALID_CREDENTIALS": "Invalid email or password. Please try again.",
+  "ERROR_INACTIVE_ACCOUNT": "Your account is not active. Please contact support.",
+  "ERROR_PROFILE_PICTURE_REQUIRED": "A profile picture is required for registration.",
+  "SUCCESS_REGISTER": "Customer registration successful!",
+  "SUCCESS_LOGIN": "Login successful! Welcome back.",
+  "SUCCESS_LOGOUT": "Logout successful.",
+  "FETCH_SUCCESS": "Customer information retrieved successfully.",
+  "UPDATE_SUCCESS": "Customer profile updated successfully.",
+  "DELETE_SUCCESS": "Customer account deleted successfully."
+}

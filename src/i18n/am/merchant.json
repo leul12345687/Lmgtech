@@ -1,0 +1,5 @@
+{
+  "ALL_FIELDS_REQUIRED": "ሁሉም መስፈርቶች ከፎቶ ወይም ሎጎ ጋር ያስፈልጋሉ።",
+  "EMAIL_EXISTS": "በዚህ ኢሜይል ተጠቃሚ አለ።",
+  "INVALID_CREDENTIALS": "የተሳሳተ መረጃ ወይም አካውንት የተሰናከለ ነው።"
+}

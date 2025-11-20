@@ -1,0 +1,15 @@
+{
+  "SUCCESS_BOOKING_CREATED": "ቦኪንግ በተሳካ ሁኔታ ተፈጥሯል።",
+  "ERROR_NOT_ENOUGH_STOCK": "በቂ ንብረት የለም።",
+  "ERROR_ASSET_UNAVAILABLE": "ይህ ንብረት በተመረጠው ጊዜ ተይዟል።",
+  "ERROR_PERMISSION_DENIED": "ይህንን ተግባር ለማከናወን ፍቃድ የሎትም።",
+  "ERROR_INVALID_INTERVAL": "የተሳሳተ የጊዜ ክፍል ተመርጧል።",
+  "ERROR_MERCHANT_NOT_FOUND": "ከዚህ ኢሜል ጋር ተመሳሳይ ነጋዴ አልተገኘም።",
+  "ERROR_ASSET_NOT_FOUND": "ከዚህ ነጋዴ ጋር የተያያዘ ንብረት አልተገኘም።",
+  "SUCCESS_BOOKING_CONFIRMED": "ቦኪንግ በተሳካ ሁኔታ ተረጋግጧል።",
+  "SUCCESS_BOOKING_CANCELLED": "ቦኪንግ ተሰርዟል፣ እና የተቀነሰው ንብረት ተመለሰ።",
+  
+    "SUCCESS_BOOKING_UPDATED": "የቦኪንግ መረጃ በሚስጥር ተሻሽሏል።",
+    "SUCCESS_BOOKING_DELETED": "የቦኪንግ መረጃ በሚስጥር ተሰርዟል።",
+    "ERROR_BOOKING_NOT_FOUND": "ቦኪንግ አልተገኘም።"
+}

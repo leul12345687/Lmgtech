@@ -1,0 +1,13 @@
+{
+  "ERROR_REQUIRED_FIELDS": "አስፈላጊ መስኮች ሁሉ መሞላት አለባቸው።",
+  "ERROR_EMAIL_EXISTS": "ይህ ኢሜይል አስቀድሞ ተመዝግቧል። እባክዎ ሌላ ኢሜይል ይጠቀሙ።",
+  "ERROR_INVALID_CREDENTIALS": "የተሳሳተ ኢሜይል ወይም የይለፍ ቃል። እባክዎን እንደገና ይሞክሩ።",
+  "ERROR_INACTIVE_ACCOUNT": "መለያዎ አቋርጧል። እባክዎ አገልግሎት ያነጋግሩ።",
+  "ERROR_PROFILE_PICTURE_REQUIRED": "ፎቶ መስጠት አስፈላጊ ነው።",
+  "SUCCESS_REGISTER": "የደንበኛ መመዝገብ ተሳክቷል።",
+  "SUCCESS_LOGIN": "በተሳካ ሁኔታ ገብተዋል። እንኳን ደህና መጡ።",
+  "SUCCESS_LOGOUT": "በተሳካ ሁኔታ ወጥተዋል።",
+  "FETCH_SUCCESS": "የደንበኛ መረጃ በተሳካ ሁኔታ ተመዝግቧል።",
+  "UPDATE_SUCCESS": "የደንበኛ መረጃ ተስተካክሏል።",
+  "DELETE_SUCCESS": "መለያዎ በተሳካ ሁኔታ ተሰርዟል።"
+}

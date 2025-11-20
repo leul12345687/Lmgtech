@@ -1,0 +1,12 @@
+{
+  "SUCCESS_BOOKINGS_FETCHED": "Odeeffannoon booking milkaa’inaan argame.",
+  "ERROR_NO_BOOKINGS_FOUND": "Booking tokko illee daldalaa kanaaf hin argamne.",
+  "SUCCESS_PROPERTY_FETCHED": "Odeeffannoon qabeenyaa milkaa’inaan argame.",
+  "ERROR_NO_PROPERTY_FOUND": "Qabeenya daldalaa kanaaf galmaa’e hin jiru.",
+  "SUCCESS_PROPERTY_UPDATED": "Qabeenyi milkaa’inaan haaromsame.",
+  "ERROR_PROPERTY_NOT_FOUND": "Qabeenyi barbaadamu hin argamne.",
+  "SUCCESS_PROPERTY_DELETED": "Qabeenyi milkaa’inaan haqame.",
+  "SUCCESS_BOOKING_UPDATED": "Haala booking milkaa’inaan haaromsame.",
+  "SUCCESS_BOOKING_DELETED": "Booking milkaa’inaan haqame.",
+  "ERROR_BOOKING_NOT_FOUND": "Booking barbaadamu hin argamne."
+}

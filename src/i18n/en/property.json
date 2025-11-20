@@ -1,0 +1,9 @@
+{
+  "ERROR_REQUIRED_FIELDS": "All asset details (including price unit, prices, and number of properties) and at least one image are mandatory.",
+  "ERROR_IMAGE_REQUIRED": "At least one asset image is required.",
+  "SUCCESS_PROPERTY_CREATED": "Property created successfully.",
+  "SUCCESS_PROPERTIES_FETCHED": "Properties fetched successfully.",
+    "SUCCESS_PROPERTY_UPDATED": "Property updated successfully.",
+    "SUCCESS_PROPERTY_DELETED": "Property deleted successfully.",
+    "ERROR_NO_PROPERTY_FOUND": "Property not found."
+}

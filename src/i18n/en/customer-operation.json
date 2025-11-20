@@ -1,0 +1,11 @@
+{
+  "SUCCESS_PROPERTY_FETCHED": "Properties retrieved successfully.",
+  "ERROR_NO_PROPERTY_FOUND": "No properties found for this category or merchant.",
+  "SUCCESS_BOOKINGS_FETCHED": "Bookings retrieved successfully.",
+  "ERROR_NO_BOOKING_FOUND": "No bookings found for this customer.",
+  "ERROR_INTERNAL": "An internal server error occurred. Please try again later.",
+  "ERROR_MERCHANT_NOT_FOUND": "Merchant not found.",
+  "SUCCESS_PROPERTY_BY_MERCHANT": "Properties retrieved successfully for this merchant.",
+  "ERROR_CUSTOMER_NOT_FOUND": "Customer not found.",
+  "SUCCESS_OTHER_BOOKINGS_FETCHED": "Other customers’ bookings retrieved successfully."
+}

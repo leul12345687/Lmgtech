@@ -1,0 +1,12 @@
+{
+  "SUCCESS_BOOKINGS_FETCHED": "Bookings fetched successfully.",
+  "ERROR_NO_BOOKINGS_FOUND": "No bookings found for this merchant.",
+  "SUCCESS_PROPERTY_FETCHED": "Properties fetched successfully.",
+  "ERROR_NO_PROPERTY_FOUND": "No properties found for this merchant.",
+  "SUCCESS_PROPERTY_UPDATED": "Property updated successfully.",
+  "ERROR_PROPERTY_NOT_FOUND": "Property not found.",
+  "SUCCESS_PROPERTY_DELETED": "Property deleted successfully.",
+  "SUCCESS_BOOKING_UPDATED": "Booking status updated successfully.",
+  "SUCCESS_BOOKING_DELETED": "Booking deleted successfully.",
+  "ERROR_BOOKING_NOT_FOUND": "Booking not found."
+}

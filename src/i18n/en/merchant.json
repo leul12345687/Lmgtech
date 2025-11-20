@@ -1,0 +1,5 @@
+{
+  "ALL_FIELDS_REQUIRED": "All fields including profile picture/logo are required for registration.",
+  "EMAIL_EXISTS": "merchant with this email already exists.",
+  "INVALID_CREDENTIALS": "Invalid credentials or account is inactive."
+}

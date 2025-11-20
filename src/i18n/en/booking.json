@@ -1,0 +1,14 @@
+{
+  "SUCCESS_BOOKING_CREATED": "Booking created successfully.",
+  "ERROR_NOT_ENOUGH_STOCK": "Not enough property available for booking.",
+  "ERROR_ASSET_UNAVAILABLE": "This asset is already booked for the selected period.",
+  "ERROR_PERMISSION_DENIED": "You are not authorized to perform this action.",
+  "ERROR_INVALID_INTERVAL": "Invalid time interval specified.",
+  "ERROR_MERCHANT_NOT_FOUND": "Merchant with this email could not be found.",
+  "ERROR_ASSET_NOT_FOUND": "No asset found for this merchant.",
+  "SUCCESS_BOOKING_CONFIRMED": "Booking confirmed successfully.",
+  "SUCCESS_BOOKING_CANCELLED": "Booking cancelled successfully and stock restored.",
+   "SUCCESS_BOOKING_UPDATED": "Booking updated successfully.",
+    "SUCCESS_BOOKING_DELETED": "Booking deleted successfully.",
+    "ERROR_BOOKING_NOT_FOUND": "Booking not found."
+}

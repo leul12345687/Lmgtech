@@ -1,0 +1,11 @@
+{
+  "SUCCESS_PROPERTY_FETCHED": "ንብረቶች በተሳካ ሁኔታ ተመለሱ።",
+  "ERROR_NO_PROPERTY_FOUND": "በዚህ መደብ ወይም በንግድ ባለቤት ምንም ንብረት አልተገኘም።",
+  "SUCCESS_BOOKINGS_FETCHED": "የእርስዎ ቦኪንጎች በተሳካ ሁኔታ ተመለሱ።",
+  "ERROR_NO_BOOKING_FOUND": "ለዚህ ደንበኛ ምንም ቦኪንግ አልተገኘም።",
+  "ERROR_INTERNAL": "የውስጥ የአገልግሎት ስህተት ተፈጥሯል። እባክዎ በኋላ ይሞክሩ።",
+  "ERROR_MERCHANT_NOT_FOUND": "ንግድ ባለቤት አልተገኘም።",
+  "SUCCESS_PROPERTY_BY_MERCHANT": "የንግድ ባለቤቱ ንብረቶች በተሳካ ሁኔታ ተመለሱ።",
+  "ERROR_CUSTOMER_NOT_FOUND": "ደንበኛ አልተገኘም።",
+  "SUCCESS_OTHER_BOOKINGS_FETCHED": "የሌሎች ደንበኞች ቦኪንጎች በተሳካ ሁኔታ ተመለሱ።"
+}

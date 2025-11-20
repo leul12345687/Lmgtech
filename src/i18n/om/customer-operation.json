@@ -1,0 +1,11 @@
+{
+  "SUCCESS_PROPERTY_FETCHED": "Qabeenyi milkaa’inaan argame.",
+  "ERROR_NO_PROPERTY_FOUND": "Qabeenya gosa kanaa yookaan daldalaa kanaaf hin argamne.",
+  "SUCCESS_BOOKINGS_FETCHED": "Kiraawaan kee milkaa’inaan argame.",
+  "ERROR_NO_BOOKING_FOUND": "Kiraawaan tajaajilaa kanaaf hin argamne.",
+  "ERROR_INTERNAL": "Dogoggorri keessaa uumame. Yeroo biraa yaali.",
+  "ERROR_MERCHANT_NOT_FOUND": "Daldalaan hin argamne.",
+  "SUCCESS_PROPERTY_BY_MERCHANT": "Qabeenya daldalaa kanaa milkaa’inaan argame.",
+  "ERROR_CUSTOMER_NOT_FOUND": "Macaafa fayyadamaa hin argamne.",
+  "SUCCESS_OTHER_BOOKINGS_FETCHED": "Kiraawaa fayyadamtoota biroo milkaa’inaan argame."
+}

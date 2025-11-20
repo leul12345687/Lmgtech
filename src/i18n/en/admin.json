@@ -1,0 +1,8 @@
+{
+  "ERROR_REG_REQUIRED_FIELDS": "All required fields must be provided.",
+  "ERROR_EMAIL_EXISTS": "This email is already registered.",
+  "ERROR_INVALID_CREDENTIALS_INACTIVE": "Invalid credentials or your account is inactive.",
+  "ERROR_INVALID_CREDENTIALS": "Invalid email or password.",
+  "SUCCESS_LOGIN": "Login successful.",
+  "SUCCESS_REGISTER": "Admin registered successfully."
+}

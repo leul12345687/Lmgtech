@@ -1,0 +1,13 @@
+{
+  "ERROR_REQUIRED_FIELDS": "Dirqamni guutamuu qabu hunda guutuu qabda.",
+  "ERROR_EMAIL_EXISTS": "Imeelichi duraanii galmaa’eera. Imeelii biraa fayyadami.",
+  "ERROR_INVALID_CREDENTIALS": "Imeelii ykn jecha iccitii sirrii miti. Irra deebi’i itti yaali.",
+  "ERROR_INACTIVE_ACCOUNT": "Herregni kee hin hojjatu. Tajaajila qunnamii.",
+  "ERROR_PROFILE_PICTURE_REQUIRED": "Suuraan galmeessuu barbaachisaa dha.",
+  "SUCCESS_REGISTER": "Galmeen maamila milkaa’eera!",
+  "SUCCESS_LOGIN": "Seensi milkaa’eera! Baga nagaan dhuftan.",
+  "SUCCESS_LOGOUT": "Ba’iinsa milkaa’eera.",
+  "FETCH_SUCCESS": "Odeeffannoon maamila milkaa’inaan argameera.",
+  "UPDATE_SUCCESS": "Odeeffannoon maamila milkaa’inaan haaromsameera.",
+  "DELETE_SUCCESS": "Herregni kee milkaa’inaan haqameera."
+}

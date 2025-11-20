@@ -1,0 +1,8 @@
+{
+  "ERROR_REG_REQUIRED_FIELDS": "እባክዎን አስፈላጊ መስኮችን ያስገቡ።",
+  "ERROR_EMAIL_EXISTS": "ይህ ኢሜይል አስቀድሞ ተመዝግቧል።",
+  "ERROR_INVALID_CREDENTIALS_INACTIVE": "የተሳሳተ መረጃ ወይም መለያዎ አታገለግልም።",
+  "ERROR_INVALID_CREDENTIALS": "የተሳሳተ ኢሜይል ወይም የይለፍ ቃል።",
+  "SUCCESS_LOGIN": "መግባት ተሳክቷል።",
+  "SUCCESS_REGISTER": "አስተዳዳሪው በተሳካ መንገድ ተመዝግቧል።"
+}
