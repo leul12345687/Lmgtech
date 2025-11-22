@@ -8,6 +8,7 @@ import * as fs from 'fs';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // Validation
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -15,21 +16,26 @@ async function bootstrap() {
       transform: true,
     }),
   );
+app.enableCors({
+origin: [
+  'http://localhost:5173',
+  'https://customer-portal-111.onrender.com',
+  'https://lmgtech.netlify.app'
+],
+credentials: true,
+methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+});
 
-  app.enableCors({
-    origin: ['http://localhost:5173', 'http://localhost:5174'],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true,
-  });
-
+  // Uploads folder
   const uploadsDir = join(__dirname, '..', 'uploads');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
+  // Port for Render
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`🚀 App running on: http://localhost:${port}`);
+  console.log(`🚀 App running on port: ${port}`);
 }
 
 bootstrap();
