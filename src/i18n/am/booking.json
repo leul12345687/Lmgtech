@@ -11,5 +11,15 @@
   
     "SUCCESS_BOOKING_UPDATED": "የቦኪንግ መረጃ በሚስጥር ተሻሽሏል።",
     "SUCCESS_BOOKING_DELETED": "የቦኪንግ መረጃ በሚስጥር ተሰርዟል።",
-    "ERROR_BOOKING_NOT_FOUND": "ቦኪንግ አልተገኘም።"
+    "ERROR_BOOKING_NOT_FOUND": "ቦኪንግ አልተገኘም።",
+    
+    "ERROR_MISSING_FIELDS": "የተሟላ መረጃ የቀረበ አልተገኘም።",
+   
+    "ERROR_CUSTOMER_NOT_FOUND": "ደንበኛ አልተገኘም።",
+    "ERROR_INVALID_DATE": "የመነሻ ወቅት ወይም የመጨረሻ ወቅት ትክክል አይደለም።",
+  
+    "ERROR_CREATE_BOOKING": "ቦኪንግ ማምረት አልተቻለም።",
+    "EMAIL_SUBJECT_BOOKING_CREATED": "ቦኪንጎችዎ ተፈጥሯል",
+    "EMAIL_SUBJECT_BOOKING_CREATED_MERCHANT": "አዲስ ቦኪንግ ለእቃዎ ተደርጓል",
+    "EMAIL_SUBJECT_RENTAL_ENDED": "የኪራይ ጊዜ አልፎአል"
 }

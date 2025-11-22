@@ -170,72 +170,7 @@ export class BookingService {
     }
   }
 
-  // ===================================================
-  // Cancel booking (customer or merchant)
-  // ===================================================
-  async cancelBooking(bookingId: string, cancelledBy: string /* 'customer' | 'merchant' */, lang = 'en') {
-    if (!Types.ObjectId.isValid(bookingId)) throw new BadRequestException('Invalid booking id');
-    const booking = await this.bookingModel.findById(bookingId);
-    if (!booking) throw new NotFoundException(await this.i18n.translate('booking.ERROR_BOOKING_NOT_FOUND', { lang }));
-
-    if (booking.status === BookingStatus.CANCELLED) {
-      throw new BadRequestException(await this.i18n.translate('booking.ERROR_ALREADY_CANCELLED', { lang }));
-    }
-
-    booking.status = BookingStatus.CANCELLED;
-    await booking.save();
-
-    // notify customer & merchant about cancellation (best-effort)
-    try {
-      const pop = await booking.populate<{ customer: UserDocument; merchant: UserDocument; asset: AssetDocument }>('customer merchant asset');
-      const customer = pop.customer;
-      const merchant = pop.merchant;
-      const assetName = pop.asset?.name || 'asset';
-
-      await this.mailService.sendMail(
-        customer.email,
-        await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CANCELLED', { lang }),
-        `<p>Hello ${customer.fullName},</p><p>Your booking for <strong>${assetName}</strong> was cancelled.</p>`,
-      );
-      await this.mailService.sendMail(
-        merchant.email,
-        await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CANCELLED_MERCHANT', { lang }),
-        `<p>Booking for <strong>${assetName}</strong> has been cancelled by ${cancelledBy}.</p>`,
-      );
-
-      if (customer.phonenumber) await this.smsService.sendSms(customer.phonenumber.toString(), `Your booking for ${assetName} was cancelled.`);
-      if (merchant.phonenumber) await this.smsService.sendSms(merchant.phonenumber.toString(), `Booking for ${assetName} was cancelled.`);
-    } catch (notifyErr) {
-      this.logger.warn('Cancellation notifications failed: ' + notifyErr?.message);
-    }
-
-    return { message: await this.i18n.translate('booking.SUCCESS_BOOKING_CANCELLED', { lang }), bookingId };
-  }
-
-  // ===================================================
-  // Update booking status (e.g., CONFIRMED, REJECTED)
-  // ===================================================
-  async updateBookingStatus(bookingId: string, status: BookingStatus, lang = 'en') {
-    if (!Types.ObjectId.isValid(bookingId)) throw new BadRequestException('Invalid booking id');
-    const booking = await this.bookingModel.findById(bookingId);
-    if (!booking) throw new NotFoundException(await this.i18n.translate('booking.ERROR_BOOKING_NOT_FOUND', { lang }));
-
-    booking.status = status;
-    await booking.save();
-
-    // If confirmed, optionally notify user (one-time)
-    if (status === BookingStatus.CONFIRMED && !booking.confirmedNotified) {
-      try {
-        const pop = await booking.populate<{ customer: UserDocument; asset: AssetDocument; merchant: UserDocument }>('customer asset merchant');
-        // notify both sides that booking is confirmed
-        await this.notifyBookingConfirmedToBoth(booking, pop.customer, pop.merchant, pop.asset, lang);
-      } catch (err) {
-        this.logger.warn('Failed to send confirmation notification: ' + err?.message);
-      }
-    }
-
-    return { message: await this.i18n.translate('booking.SUCCESS_STATUS_UPDATED', { lang }), bookingId, status };
-  }
+  
 
   // ===================================================
   // Helper: Duration Calculator (keeps original logic)
@@ -385,48 +320,6 @@ export class BookingService {
         this.logger.warn('Failed to send booking-created SMS to merchant: ' + err?.message);
       }
     }
-  }
-
-  private async notifyBookingConfirmedToBoth(
-    booking: BookingDocument,
-    customer: UserDocument,
-    merchant: UserDocument,
-    asset: AssetDocument,
-    lang: string,
-  ) {
-    const customerPhone = (customer.phonenumber || '').toString();
-    const merchantPhone = (merchant.phonenumber || '').toString();
-
-    const startET = moment(booking.startDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
-    const endET = moment(booking.endDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
-
-    const subjectCustomer = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CONFIRMED', { lang });
-    const subjectMerchant = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CONFIRMED_MERCHANT', { lang });
-
-    try {
-      await this.mailService.sendMail(
-        customer.email,
-        subjectCustomer,
-        `<p>Hello ${customer.fullName},</p><p>Your booking for <strong>${asset.name}</strong> is confirmed.</p><p>${startET} → ${endET}</p>`,
-      );
-      if (customerPhone) await this.smsService.sendSms(customerPhone, `Your booking for ${asset.name} is confirmed. ${startET} → ${endET}`);
-    } catch (err) {
-      this.logger.warn('Failed to notify customer about confirmation: ' + err?.message);
-    }
-
-    try {
-      await this.mailService.sendMail(
-        merchant.email,
-        subjectMerchant,
-        `<p>Hello ${merchant.fullName},</p><p>The booking for <strong>${asset.name}</strong> has been confirmed by the merchant.</p><p>Customer: ${customer.fullName}</p><p>${startET} → ${endET}</p>`,
-      );
-      if (merchantPhone) await this.smsService.sendSms(merchantPhone, `Booking confirmed for ${asset.name} (${customer.fullName}). ${startET} → ${endET}`);
-    } catch (err) {
-      this.logger.warn('Failed to notify merchant about confirmation: ' + err?.message);
-    }
-
-    booking.confirmedNotified = true;
-    await booking.save();
   }
 
   // ===================================================

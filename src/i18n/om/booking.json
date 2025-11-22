@@ -11,5 +11,14 @@
   
     "SUCCESS_BOOKING_UPDATED": "Galmeen kireeffannaa milkaa’inaan fooyya’eera.",
     "SUCCESS_BOOKING_DELETED": "Galmeen kireeffannaa milkaa’inaan haaqameera.",
-    "ERROR_BOOKING_NOT_FOUND": "Galmeen kireeffannaa hin argamne."
+    "ERROR_BOOKING_NOT_FOUND": "Galmeen kireeffannaa hin argamne.",
+    
+    "ERROR_MISSING_FIELDS": "Meeshalee barbaachisan hin guutamne.",
+   
+    "ERROR_CUSTOMER_NOT_FOUND": "Macaaqa hin argamne.",
+    "ERROR_INVALID_DATE": "Guyyaa jalqabaa ykn dhumaa sirrii miti.",
+    "ERROR_CREATE_BOOKING": "Boo'ii uumuun hin milkoofne.",
+    "EMAIL_SUBJECT_BOOKING_CREATED": "Boo'ii kee uumameera",
+    "EMAIL_SUBJECT_BOOKING_CREATED_MERCHANT": "Boo'ii haaraa qabeenya kee irratti taasifameera",
+    "EMAIL_SUBJECT_RENTAL_ENDED": "Yeroo kiristaalii xumurame"
 }

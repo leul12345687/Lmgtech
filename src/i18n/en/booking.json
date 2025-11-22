@@ -10,5 +10,16 @@
   "SUCCESS_BOOKING_CANCELLED": "Booking cancelled successfully and stock restored.",
    "SUCCESS_BOOKING_UPDATED": "Booking updated successfully.",
     "SUCCESS_BOOKING_DELETED": "Booking deleted successfully.",
-    "ERROR_BOOKING_NOT_FOUND": "Booking not found."
+    "ERROR_BOOKING_NOT_FOUND": "Booking not found.",
+    
+    "ERROR_MISSING_FIELDS": "Missing required fields for booking.",
+   
+    "ERROR_CUSTOMER_NOT_FOUND": "Customer not found.",
+  
+    "ERROR_INVALID_DATE": "Invalid start or end date.",
+    "ERROR_CREATE_BOOKING": "Failed to create booking.",
+  
+    "EMAIL_SUBJECT_BOOKING_CREATED": "Your booking has been created",
+    "EMAIL_SUBJECT_BOOKING_CREATED_MERCHANT": "A new booking has been made for your asset",
+    "EMAIL_SUBJECT_RENTAL_ENDED": "Rental period ended"
 }
