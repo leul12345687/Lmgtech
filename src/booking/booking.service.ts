@@ -10,7 +10,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { I18nService } from 'nestjs-i18n';
 import { Cron } from '@nestjs/schedule';
-import * as moment from 'moment-timezone';
+import moment from 'moment-timezone';
 import {
   Booking,
   BookingDocument,
@@ -46,7 +46,9 @@ export class BookingService {
 
   // ===================================================
   // CREATE BOOKING
-  // Converts submitted dates from Ethiopia TZ → UTC
+  // Converts submitted dates from Ethiopia TZ → UTC (store UTC)
+  // Notifies customer + merchant after creation
+  // Returns booking summary with ET-formatted dates
   // ===================================================
   async createBooking(
     customerId: Types.ObjectId,
@@ -57,35 +59,44 @@ export class BookingService {
     timeInterval: TimeInterval,
     numberOfProperty: number,
     securityDeposit: number,
-    lang: string,
+    lang = 'en',
   ) {
     this.logger.log('📦 [BookingService] createBooking() called');
 
+    // basic validation
     if (!customerId || !assetName || !merchantEmail || !startDate || !endDate || !timeInterval || !numberOfProperty) {
       throw new BadRequestException(await this.i18n.translate('booking.ERROR_MISSING_FIELDS', { lang }));
     }
 
-    // Find merchant & customer
+    // find merchant & customer
     const merchant = await this.userModel.findOne({ email: merchantEmail, role: UserRole.MERCHANT });
     if (!merchant) throw new NotFoundException(await this.i18n.translate('booking.ERROR_MERCHANT_NOT_FOUND', { lang }));
+
     const customer = await this.userModel.findById(customerId);
     if (!customer) throw new NotFoundException(await this.i18n.translate('booking.ERROR_CUSTOMER_NOT_FOUND', { lang }));
 
-    // Find asset
+    // find asset (through PropertyService's assetModel)
     const assetModel = this.propertyService['assetModel'] as Model<AssetDocument>;
     const asset = await assetModel.findOne({ name: assetName, merchant: merchant._id }).exec();
     if (!asset) throw new NotFoundException(await this.i18n.translate('booking.ERROR_ASSET_NOT_FOUND', { lang }));
     if (asset.status !== AssetStatus.AVAILABLE) throw new BadRequestException(await this.i18n.translate('booking.ERROR_ASSET_UNAVAILABLE', { lang }));
 
-    // Convert start/end dates to Ethiopia TZ then to UTC
-    const startUTC = moment.tz(startDate, this.ET_TIMEZONE).utc().toDate();
-    const endUTC = moment.tz(endDate, this.ET_TIMEZONE).utc().toDate();
+    // Convert start/end dates from Ethiopia timezone into UTC Date objects
+    // Input is assumed to be the local ET time selected by user
+    let startUTC: Date;
+    let endUTC: Date;
+    try {
+      startUTC = moment.tz(startDate as any, this.ET_TIMEZONE).utc().toDate();
+      endUTC = moment.tz(endDate as any, this.ET_TIMEZONE).utc().toDate();
+    } catch (e) {
+      throw new BadRequestException(await this.i18n.translate('booking.ERROR_INVALID_DATE', { lang }));
+    }
 
-    // Calculate duration
+    // Calculate number of units (duration)
     const numberOfUnits = this.calculateDuration(startUTC, endUTC, timeInterval, lang);
 
-    // Price
-    const priceMap = {
+    // price lookup
+    const priceMap: Record<TimeInterval, number | undefined> = {
       [TimeInterval.HOUR]: asset.rentalPriceperhour,
       [TimeInterval.DAY]: asset.rentalPriceperday,
       [TimeInterval.WEEK]: asset.rentalPriceperweek,
@@ -96,10 +107,11 @@ export class BookingService {
     if (!pricePerUnit) throw new BadRequestException(await this.i18n.translate('booking.ERROR_INVALID_INTERVAL', { lang }));
     const totalPrice = pricePerUnit * numberOfUnits * numberOfProperty;
 
-    // Transaction
+    // Use a transaction to avoid race conditions when checking available units
     const session = await this.bookingModel.db.startSession();
     session.startTransaction();
     try {
+      // re-check overlapping bookings (within transaction)
       const overlapping = await this.bookingModel.find({
         asset: asset._id,
         status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
@@ -108,12 +120,14 @@ export class BookingService {
 
       const totalBooked = overlapping.reduce((sum, b) => sum + (b.numberOfProperty || 0), 0);
       const availableUnits = (asset.numberOfProperty || 0) - totalBooked;
+
       if (availableUnits < numberOfProperty) {
         await session.abortTransaction();
         throw new BadRequestException(await this.i18n.translate('booking.ERROR_NOT_ENOUGH_STOCK', { lang }));
       }
 
-      const booking = await this.bookingModel.create(
+      // create booking document (stored in UTC)
+      const createdArr = await this.bookingModel.create(
         [
           {
             customer: customer._id,
@@ -137,13 +151,16 @@ export class BookingService {
 
       await session.commitTransaction();
       session.endSession();
-      const created = booking[0];
+
+      const created = createdArr[0];
       this.logger.log(`✅ Booking created successfully with ID: ${created._id}`);
 
-      // Notify creation
-      await this.notifyBookingCreated(created, customer, asset, lang);
+      // Notify both merchant & customer (email + sms) with asset name, rental range, customer name
+      await this.notifyBookingCreatedToBoth(created, customer, merchant, asset, lang);
 
-      return this.buildBookingSummary(created, customer, merchant, asset, availableUnits - numberOfProperty, pricePerUnit);
+      // Return booking summary with ET-formatted dates
+      const summary = await this.buildBookingSummary(created, customer, merchant, asset, availableUnits - numberOfProperty, pricePerUnit, lang);
+      return summary;
     } catch (err) {
       await session.abortTransaction();
       session.endSession();
@@ -154,27 +171,38 @@ export class BookingService {
   }
 
   // ===================================================
-  // Cancel booking
+  // Cancel booking (customer or merchant)
   // ===================================================
-  async cancelBooking(bookingId: string, cancelledBy: string, lang = 'en') {
+  async cancelBooking(bookingId: string, cancelledBy: string /* 'customer' | 'merchant' */, lang = 'en') {
     if (!Types.ObjectId.isValid(bookingId)) throw new BadRequestException('Invalid booking id');
     const booking = await this.bookingModel.findById(bookingId);
     if (!booking) throw new NotFoundException(await this.i18n.translate('booking.ERROR_BOOKING_NOT_FOUND', { lang }));
-    if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException(await this.i18n.translate('booking.ERROR_ALREADY_CANCELLED', { lang }));
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new BadRequestException(await this.i18n.translate('booking.ERROR_ALREADY_CANCELLED', { lang }));
+    }
 
     booking.status = BookingStatus.CANCELLED;
     await booking.save();
 
-    // Notify cancellation
+    // notify customer & merchant about cancellation (best-effort)
     try {
       const pop = await booking.populate<{ customer: UserDocument; merchant: UserDocument; asset: AssetDocument }>('customer merchant asset');
       const customer = pop.customer;
       const merchant = pop.merchant;
       const assetName = pop.asset?.name || 'asset';
-      await this.mailService.sendMail(customer.email, await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CANCELLED', { lang }),
-        `<p>Hello ${customer.fullName},</p><p>Your booking for <strong>${assetName}</strong> was cancelled.</p>`);
-      await this.mailService.sendMail(merchant.email, await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CANCELLED_MERCHANT', { lang }),
-        `<p>Booking for <strong>${assetName}</strong> has been cancelled by ${cancelledBy}.</p>`);
+
+      await this.mailService.sendMail(
+        customer.email,
+        await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CANCELLED', { lang }),
+        `<p>Hello ${customer.fullName},</p><p>Your booking for <strong>${assetName}</strong> was cancelled.</p>`,
+      );
+      await this.mailService.sendMail(
+        merchant.email,
+        await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CANCELLED_MERCHANT', { lang }),
+        `<p>Booking for <strong>${assetName}</strong> has been cancelled by ${cancelledBy}.</p>`,
+      );
+
       if (customer.phonenumber) await this.smsService.sendSms(customer.phonenumber.toString(), `Your booking for ${assetName} was cancelled.`);
       if (merchant.phonenumber) await this.smsService.sendSms(merchant.phonenumber.toString(), `Booking for ${assetName} was cancelled.`);
     } catch (notifyErr) {
@@ -185,7 +213,7 @@ export class BookingService {
   }
 
   // ===================================================
-  // Update booking status
+  // Update booking status (e.g., CONFIRMED, REJECTED)
   // ===================================================
   async updateBookingStatus(bookingId: string, status: BookingStatus, lang = 'en') {
     if (!Types.ObjectId.isValid(bookingId)) throw new BadRequestException('Invalid booking id');
@@ -195,10 +223,12 @@ export class BookingService {
     booking.status = status;
     await booking.save();
 
+    // If confirmed, optionally notify user (one-time)
     if (status === BookingStatus.CONFIRMED && !booking.confirmedNotified) {
       try {
-        const pop = await booking.populate<{ customer: UserDocument; asset: AssetDocument }>('customer asset');
-        await this.notifyBookingConfirmed(booking, pop.customer, pop.asset, lang);
+        const pop = await booking.populate<{ customer: UserDocument; asset: AssetDocument; merchant: UserDocument }>('customer asset merchant');
+        // notify both sides that booking is confirmed
+        await this.notifyBookingConfirmedToBoth(booking, pop.customer, pop.merchant, pop.asset, lang);
       } catch (err) {
         this.logger.warn('Failed to send confirmation notification: ' + err?.message);
       }
@@ -208,49 +238,60 @@ export class BookingService {
   }
 
   // ===================================================
-  // Helper: Duration Calculator
+  // Helper: Duration Calculator (keeps original logic)
   // ===================================================
   private calculateDuration(startDate: Date, endDate: Date, timeInterval: TimeInterval, lang: string): number {
     switch (timeInterval) {
-      case TimeInterval.HOUR: return Math.max(1, differenceInHours(endDate, startDate));
-      case TimeInterval.DAY: return Math.max(1, differenceInDays(endDate, startDate));
-      case TimeInterval.WEEK: return Math.max(1, differenceInWeeks(endDate, startDate));
-      case TimeInterval.MONTH: return Math.max(1, differenceInMonths(endDate, startDate));
-      case TimeInterval.YEAR: return Math.max(1, differenceInYears(endDate, startDate));
-      default: throw new BadRequestException(this.i18n.translate('booking.ERROR_INVALID_INTERVAL', { lang }));
+      case TimeInterval.HOUR:
+        return Math.max(1, differenceInHours(endDate, startDate));
+      case TimeInterval.DAY:
+        return Math.max(1, differenceInDays(endDate, startDate));
+      case TimeInterval.WEEK:
+        return Math.max(1, differenceInWeeks(endDate, startDate));
+      case TimeInterval.MONTH:
+        return Math.max(1, differenceInMonths(endDate, startDate));
+      case TimeInterval.YEAR:
+        return Math.max(1, differenceInYears(endDate, startDate));
+      default:
+        throw new BadRequestException(this.i18n.translate('booking.ERROR_INVALID_INTERVAL', { lang }));
     }
   }
 
   // ===================================================
   // CRON → Notify customer + merchant when booking ends
+  // Runs every 5 minutes; recovers missed notifications if server was down
   // ===================================================
   @Cron('*/5 * * * *')
   async checkBookingEnd() {
-    const nowET = moment().tz(this.ET_TIMEZONE).toDate();
+    // Use UTC now as the stored dates are UTC instants; for logging show ET
+    const nowUtc = moment().utc().toDate();
+    const nowEtStr = moment(nowUtc).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
 
     const endedBookings = await this.bookingModel
       .find({
-        endDate: { $lte: nowET },
+        endDate: { $lte: nowUtc },
         status: BookingStatus.CONFIRMED,
         $or: [{ notifiedEmail: { $ne: true } }, { notifiedSms: { $ne: true } }],
       })
-      .populate<{ customer: UserDocument; asset: AssetDocument }>('customer asset');
+      .populate<{ customer: UserDocument; merchant: UserDocument; asset: AssetDocument }>('customer merchant asset');
 
-    this.logger.log(`Cron checkBookingEnd: found ${endedBookings.length} ended bookings at ${nowET.toISOString()}`);
+    this.logger.log(`Cron checkBookingEnd: found ${endedBookings.length} ended bookings at ET ${nowEtStr}`);
 
     for (const booking of endedBookings) {
       try {
         const customer = booking.customer;
+        const merchant = booking.merchant;
         const assetName = booking.asset?.name || 'asset';
         const customerEmail = customer?.email;
         const customerPhone = (customer?.phonenumber || '').toString();
 
+        // Email
         if (!booking.notifiedEmail && customerEmail) {
           try {
             await this.mailService.sendMail(
               customerEmail,
               await this.i18n.translate('booking.EMAIL_SUBJECT_RENTAL_ENDED', { lang: 'en' }),
-              `<p>Hello ${customer.fullName},</p><p>Your rental for <strong>${assetName}</strong> has ended. Thank you!</p>`
+              `<p>Hello ${customer.fullName},</p><p>Your rental for <strong>${assetName}</strong> has ended. Thank you!</p>`,
             );
             booking.notifiedEmail = true;
           } catch (mailErr) {
@@ -258,6 +299,7 @@ export class BookingService {
           }
         }
 
+        // SMS
         if (!booking.notifiedSms && customerPhone) {
           try {
             await this.smsService.sendSms(customerPhone, `Hello ${customer.fullName}, your rental for ${assetName} has ended. Thank you!`);
@@ -267,7 +309,11 @@ export class BookingService {
           }
         }
 
-        if (booking.notifiedEmail || booking.notifiedSms) await booking.save();
+        // persist flags
+        if (booking.notifiedEmail || booking.notifiedSms) {
+          await booking.save();
+          this.logger.log(`Notifications updated for booking ${booking._id}: email=${booking.notifiedEmail} sms=${booking.notifiedSms}`);
+        }
       } catch (err) {
         this.logger.error(`Failed processing ended booking ${booking._id}: ${err.stack || err}`);
       }
@@ -277,46 +323,126 @@ export class BookingService {
   // ===================================================
   // Helpers for notifications
   // ===================================================
-  private async notifyBookingCreated(booking: BookingDocument, customer: UserDocument, asset: AssetDocument, lang: string) {
+  private async notifyBookingCreatedToBoth(
+    booking: BookingDocument,
+    customer: UserDocument,
+    merchant: UserDocument,
+    asset: AssetDocument,
+    lang: string,
+  ) {
     const customerPhone = (customer.phonenumber || '').toString();
+    const merchantPhone = (merchant.phonenumber || '').toString();
+
+    const startET = moment(booking.startDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
+    const endET = moment(booking.endDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
+
+    // Subjects (i18n)
+    const customerSubject = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CREATED', { lang });
+    const merchantSubject = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CREATED_MERCHANT', { lang });
+
+    // Customer email
     try {
       await this.mailService.sendMail(
         customer.email,
-        await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CREATED', { lang }),
-        `<p>Hello ${customer.fullName},</p><p>Your booking for <strong>${asset.name}</strong> has been created and is pending confirmation.</p>`
+        customerSubject,
+        `<p>Hello ${customer.fullName},</p>
+         <p>Your booking for <strong>${asset.name}</strong> has been created and is pending confirmation.</p>
+         <p><strong>Rental Period:</strong> ${startET} → ${endET}</p>
+         <p><strong>Merchant:</strong> ${merchant.businessName || merchant.fullName}</p>`,
       );
-      if (customerPhone) await this.smsService.sendSms(customerPhone, `Hi ${customer.fullName}, your booking for ${asset.name} is created (pending).`);
     } catch (err) {
-      this.logger.warn('Booking created notification failed: ' + err.message);
+      this.logger.warn('Failed to send booking-created email to customer: ' + err?.message);
+    }
+
+    // Merchant email
+    try {
+      await this.mailService.sendMail(
+        merchant.email,
+        merchantSubject,
+        `<p>Hello ${merchant.businessName || merchant.fullName},</p>
+         <p>A new booking has been created for <strong>${asset.name}</strong>.</p>
+         <p><strong>Rental Period:</strong> ${startET} → ${endET}</p>
+         <p><strong>Customer:</strong> ${customer.fullName} (${customer.email})</p>`,
+      );
+    } catch (err) {
+      this.logger.warn('Failed to send booking-created email to merchant: ' + err?.message);
+    }
+
+    // Customer SMS
+    if (customerPhone) {
+      try {
+        await this.smsService.sendSms(customerPhone, `Your booking for ${asset.name} is created. ${startET} → ${endET}`);
+      } catch (err) {
+        this.logger.warn('Failed to send booking-created SMS to customer: ' + err?.message);
+      }
+    }
+
+    // Merchant SMS
+    if (merchantPhone) {
+      try {
+        await this.smsService.sendSms(merchantPhone, `New booking: ${asset.name} by ${customer.fullName}. ${startET} → ${endET}`);
+      } catch (err) {
+        this.logger.warn('Failed to send booking-created SMS to merchant: ' + err?.message);
+      }
     }
   }
 
-  private async notifyBookingConfirmed(booking: BookingDocument, customer: UserDocument, asset: AssetDocument, lang: string) {
+  private async notifyBookingConfirmedToBoth(
+    booking: BookingDocument,
+    customer: UserDocument,
+    merchant: UserDocument,
+    asset: AssetDocument,
+    lang: string,
+  ) {
     const customerPhone = (customer.phonenumber || '').toString();
+    const merchantPhone = (merchant.phonenumber || '').toString();
+
+    const startET = moment(booking.startDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
+    const endET = moment(booking.endDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
+
+    const subjectCustomer = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CONFIRMED', { lang });
+    const subjectMerchant = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CONFIRMED_MERCHANT', { lang });
+
     try {
       await this.mailService.sendMail(
         customer.email,
-        await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CONFIRMED', { lang }),
-        `<p>Hello ${customer.fullName},</p><p>Your booking for <strong>${asset.name}</strong> is confirmed.</p>`
+        subjectCustomer,
+        `<p>Hello ${customer.fullName},</p><p>Your booking for <strong>${asset.name}</strong> is confirmed.</p><p>${startET} → ${endET}</p>`,
       );
-      if (customerPhone) await this.smsService.sendSms(customerPhone, `Your booking for ${asset.name} is confirmed.`);
-      booking.confirmedNotified = true;
-      await booking.save();
+      if (customerPhone) await this.smsService.sendSms(customerPhone, `Your booking for ${asset.name} is confirmed. ${startET} → ${endET}`);
     } catch (err) {
-      this.logger.warn('Booking confirmed notification failed: ' + err.message);
+      this.logger.warn('Failed to notify customer about confirmation: ' + err?.message);
     }
+
+    try {
+      await this.mailService.sendMail(
+        merchant.email,
+        subjectMerchant,
+        `<p>Hello ${merchant.fullName},</p><p>The booking for <strong>${asset.name}</strong> has been confirmed by the merchant.</p><p>Customer: ${customer.fullName}</p><p>${startET} → ${endET}</p>`,
+      );
+      if (merchantPhone) await this.smsService.sendSms(merchantPhone, `Booking confirmed for ${asset.name} (${customer.fullName}). ${startET} → ${endET}`);
+    } catch (err) {
+      this.logger.warn('Failed to notify merchant about confirmation: ' + err?.message);
+    }
+
+    booking.confirmedNotified = true;
+    await booking.save();
   }
 
-  private buildBookingSummary(
+  // ===================================================
+  // Build booking summary (returns ET-formatted dates)
+  // ===================================================
+  private async buildBookingSummary(
     booking: BookingDocument,
     customer: UserDocument,
     merchant: UserDocument,
     asset: AssetDocument,
     availableUnitsAfterBooking: number,
-    pricePerUnit: number
+    pricePerUnit: number,
+    lang = 'en',
   ) {
     return {
-      message: `Booking created successfully`,
+      message: await this.i18n.translate('booking.SUCCESS_BOOKING_CREATED', { lang }),
       bookingSummary: {
         bookingId: booking._id,
         assetName: asset.name,
@@ -326,8 +452,8 @@ export class BookingService {
         customerName: customer.fullName,
         customerEmail: customer.email,
         customerPhone: customer.phonenumber,
-        startDate: moment(booking.startDate).tz(this.ET_TIMEZONE).format(),
-        endDate: moment(booking.endDate).tz(this.ET_TIMEZONE).format(),
+        startDate: moment(booking.startDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm'),
+        endDate: moment(booking.endDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm'),
         interval: booking.timeInterval,
         numberOfProperty: booking.numberOfProperty,
         numberOfUnits: booking.numberOfUnits,
