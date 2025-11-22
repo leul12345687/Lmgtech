@@ -20,6 +20,7 @@ app.enableCors({
 origin: [
   'http://localhost:5173',
   'https://customer-portal-111.onrender.com',
+  "https://customer-portal-1.onrender.com",
   'https://lmgtech.netlify.app'
 ],
 credentials: true,
