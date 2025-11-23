@@ -24,7 +24,9 @@ origin: [
   "https://lmgsystem-tau.vercel.app",
   "https://lmgsystem-p7z3.vercel.app",
   "https://lmg-system.onrender.com",
-"https://lmg-system-bfyr.onrender.com"
+"https://lmg-system-bfyr.onrender.com",
+"https://lmg-merchant-portal.vercel.app",
+"https://lmg-admin-portal.vercel.app"
 ],
 credentials: true,
 methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
