@@ -108,57 +108,64 @@ export class CustomerOperationsController {
       throw new InternalServerErrorException('Failed to upload payment proof.');
     }
   }
-
- // src/customer/customer.controller.ts
-@Get('profile')
-@UseGuards(CustomerJwtAuthGuard)
-async getMyProfile(@Req() req) {
-  try {
-    const customerId = new Types.ObjectId(req.user.sub);
-    return await this.customerOpsService.getMyProfile(customerId);
-  } catch (error) {
-    throw new InternalServerErrorException('Failed to fetch profile.');
-  }
-}
-
-@Patch('profile')
-@UseGuards(CustomerJwtAuthGuard)
-@UseInterceptors(
-  FileInterceptor('profileImage', {
-    storage: memoryStorage(),
-    fileFilter: (req, file, callback) => {
-      if (!file.originalname.match(/\.(jpg|jpeg|png)$/i)) {
-        return callback(new BadRequestException('Only JPG, JPEG, or PNG images are allowed!'), false);
-      }
-      callback(null, true);
-    },
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  }),
-)
-async updateMyProfile(
-  @Req() req,
-  @UploadedFile() file: Express.Multer.File,
-  @Body() body,
-) {
-  const customerId = new Types.ObjectId(req.user.sub);
-
-  return await this.customerOpsService.updateMyProfile(customerId, body, file);
-}
-
-// ===========================================================
-  // 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL CUSTOMERS)
-  // ===========================================================
-  @Get('bookings/all')
-  @UseGuards(ManagerJwtAuthGuard )
-  async getAllBookings(@Req() req) {
+  @Get('profile')
+  @UseGuards(CustomerJwtAuthGuard)
+  async getMyProfile(@Req() req) {
     try {
-      const lang = req.query.lang || 'en';
-      return await this.customerOpsService.getAllBookings(lang);
+      const customerId = req.user.sub; // Already a string
+      return await this.customerOpsService.getMyProfile(customerId);
     } catch (error) {
-      this.logger.error('❌ Error fetching all bookings:', error);
-      throw new InternalServerErrorException('Failed to fetch all bookings.');
+      throw new InternalServerErrorException('Failed to fetch profile.');
     }
   }
+
+  // ===========================================================
+  // 2️⃣ UPDATE MY PROFILE
+  // ===========================================================
+  @Patch('profile')
+  @UseGuards(CustomerJwtAuthGuard)
+  @UseInterceptors(
+    FileInterceptor('profileImage', {
+      storage: memoryStorage(),
+      fileFilter: (req, file, callback) => {
+        if (!file.originalname.match(/\.(jpg|jpeg|png)$/i)) {
+          return callback(
+            new BadRequestException('Only JPG, JPEG, or PNG images are allowed!'),
+            false,
+          );
+        }
+        callback(null, true);
+      },
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    }),
+  )
+  async updateMyProfile(
+    @Req() req,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ) {
+    try {
+      const customerId = req.user.sub; // Already a string
+      return await this.customerOpsService.updateMyProfile(customerId, body, file);
+    } catch (error) {
+      console.error('❌ Error updating profile:', error);
+      throw new InternalServerErrorException('Failed to update profile.');
+    }
+  }
+// ===========================================================
+// 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL CUSTOMERS)
+// ===========================================================
+@Get('bookings/all')
+@UseGuards(ManagerJwtAuthGuard)
+async getAllBookings(@Req() req) {
+  try {
+    const lang = req.query.lang || 'en';
+    return await this.customerOpsService.getAllBookings(lang);
+  } catch (error) {
+    this.logger.error('❌ Error fetching all bookings:', error);
+    throw new InternalServerErrorException('Failed to fetch all bookings.');
+  }
+}
 
 // ===========================================================
 // 5️⃣ UPDATE A BOOKING (BY MANAGER)
@@ -173,7 +180,7 @@ async updateBookingByManager(
   try {
     const lang = req.query.lang || 'en';
     return await this.customerOpsService.updateBookingByManager(
-      new Types.ObjectId(bookingId),
+      bookingId,
       updateData,
       lang,
     );
@@ -195,7 +202,7 @@ async deleteBookingByManager(
   try {
     const lang = req.query.lang || 'en';
     return await this.customerOpsService.deleteBookingByManager(
-      new Types.ObjectId(bookingId),
+      bookingId,
       lang,
     );
   } catch (error) {
@@ -203,6 +210,4 @@ async deleteBookingByManager(
     throw new InternalServerErrorException('Failed to delete booking.');
   }
 }
-
-
 }

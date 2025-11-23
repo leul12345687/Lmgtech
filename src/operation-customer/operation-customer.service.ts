@@ -272,152 +272,172 @@ async getPropertiesByCategory(category: string, lang?: string) {
       );
     }
   }
-// src/customer/customer.service.ts
-async getMyProfile(customerId: Types.ObjectId) {
-  try {
-    const customer = await this.userModel.findById(customerId).select('-password');
-
-    if (!customer) {
-      throw new NotFoundException('Customer not found.');
-    }
-
-    return {
-      id: customer._id,
-      fullName: customer.fullName,
-      email: customer.email,
-      phonenumber: customer.phonenumber,
-      address: customer.address,
-      profilePictureUrl: customer.profilePictureUrl || null,
-    };
-  } catch (err) {
-    throw new InternalServerErrorException('Failed to fetch profile.');
-  }
-}
-
-async updateMyProfile(
-  customerId: Types.ObjectId,
-  updateData: any,
-  profileImageFile?: Express.Multer.File,
-  lang?: string,
-) {
-  try {
-    // ✅ Only allow specific fields to be updated
-    const allowedFields = ['fullName', 'email', 'phonenumber', 'address'];
-    const filteredUpdate: Record<string, any> = {};
-
-    for (const key of Object.keys(updateData)) {
-      if (allowedFields.includes(key)) {
-        filteredUpdate[key] = updateData[key];
+// ===========================================================
+  // 1️⃣ GET MY PROFILE
+  // ===========================================================
+  async getMyProfile(customerId: string) {
+    try {
+      if (!Types.ObjectId.isValid(customerId)) {
+        throw new BadRequestException('Invalid customer ID.');
       }
-    }
 
-    // ✅ Upload new profile image (if provided)
-    if (profileImageFile) {
-      const profilePictureUrl = await this.cloudinaryService.uploadImage(profileImageFile, 'customers');
-      filteredUpdate.profilePictureUrl = profilePictureUrl;
-    }
+      const customer = await this.userModel.findById(customerId).select('-password');
 
-    const customer = await this.userModel.findByIdAndUpdate(
-      customerId,
-      { $set: filteredUpdate },
-      { new: true },
-    ).select('-password');
+      if (!customer) {
+        throw new NotFoundException('Customer not found.');
+      }
 
-    if (!customer) {
-      throw new NotFoundException('Customer not found.');
-    }
-
-    return {
-      message: 'Profile updated successfully.',
-      updatedCustomer: {
+      return {
         id: customer._id,
         fullName: customer.fullName,
         email: customer.email,
         phonenumber: customer.phonenumber,
         address: customer.address,
         profilePictureUrl: customer.profilePictureUrl || null,
-      },
-    };
-  } catch (err) {
-    throw new InternalServerErrorException('Failed to update profile.');
+      };
+    } catch (err) {
+      console.error('❌ Failed to fetch profile:', err);
+      throw new InternalServerErrorException('Failed to fetch profile.');
+    }
   }
-}
-
 
   // ===========================================================
-  // 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL LOGGED-IN CUSTOMERS)
+  // 2️⃣ UPDATE MY PROFILE
   // ===========================================================
-  async getAllBookings(lang: string) {
+  async updateMyProfile(
+    customerId: string,
+    updateData: any,
+    profileImageFile?: Express.Multer.File,
+  ) {
     try {
-      const bookings = await this.bookingModel
-        .find()
-        .populate('asset', 'name category numberOfProperty imageUrls')
-        .populate('merchant', 'email fullName businessName phonenumber')
-        .lean()
-        .exec();
+      if (!Types.ObjectId.isValid(customerId)) {
+        throw new BadRequestException('Invalid customer ID.');
+      }
 
-      if (!bookings.length) {
-        throw new NotFoundException(
-          await this.i18n.translate(
-            'customer-operation.ERROR_NO_BOOKING_FOUND',
-            { lang },
-          ),
+      // Only allow specific fields to be updated
+      const allowedFields = ['fullName', 'email', 'phonenumber', 'address'];
+      const filteredUpdate: Record<string, any> = {};
+
+      for (const key of Object.keys(updateData)) {
+        if (allowedFields.includes(key) && updateData[key] !== undefined) {
+          filteredUpdate[key] = updateData[key];
+        }
+      }
+
+      // Upload new profile image (if provided)
+      if (profileImageFile) {
+        const profilePictureUrl = await this.cloudinaryService.uploadImage(
+          profileImageFile,
+          'customers',
         );
+        filteredUpdate.profilePictureUrl = profilePictureUrl;
+      }
+
+      if (Object.keys(filteredUpdate).length === 0) {
+        throw new BadRequestException('No valid fields provided for update.');
+      }
+
+      const customer = await this.userModel.findByIdAndUpdate(
+        customerId,
+        { $set: filteredUpdate },
+        { new: true, runValidators: true },
+      ).select('-password');
+
+      if (!customer) {
+        throw new NotFoundException('Customer not found.');
       }
 
       return {
-        message: await this.i18n.translate(
-          'customer-operation.SUCCESS_BOOKINGS_FETCHED',
-          { lang },
-        ),
-        totalBookings: bookings.length,
-        bookings: bookings.map((booking) => {
-          const asset = booking.asset as any;
-          const merchant = booking.merchant as any;
-          return {
-            propertyName: asset?.name || 'N/A',
-            numberOfProperty: booking?.numberOfProperty || 0,
-            merchantEmail: merchant?.email || 'N/A',
-            merchantPhone: merchant?.phonenumber || 'N/A',
-            businessName: merchant?.businessName || 'N/A',
-            startDate: booking.startDate,
-            endDate: booking.endDate,
-            paymentProofPath:booking.paymentProofPath ||"no payment proven",
-            imageUrls: asset?.imageUrls || [],
-          };
-        }),
+        message: 'Profile updated successfully.',
+        updatedCustomer: {
+          id: customer._id,
+          fullName: customer.fullName,
+          email: customer.email,
+          phonenumber: customer.phonenumber,
+          address: customer.address,
+          profilePictureUrl: customer.profilePictureUrl || null,
+        },
       };
-    } catch (error) {
-      console.error('❌ Error fetching all bookings:', error);
-      throw new InternalServerErrorException(
-        await this.i18n.translate('customer-operation.ERROR_INTERNAL', { lang }),
-      );
+    } catch (err) {
+      console.error('❌ Failed to update profile:', err);
+      throw new InternalServerErrorException('Failed to update profile.');
     }
   }
+
+
 // ===========================================================
-// UPDATE BOOKING (BY MANAGER)
+// 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL LOGGED-IN CUSTOMERS)
+// ===========================================================
+async getAllBookings(lang: string) {
+  try {
+    const bookings = await this.bookingModel
+      .find()
+      .populate('asset', 'name category numberOfProperty imageUrls')
+      .populate('merchant', 'email fullName businessName phonenumber')
+      .exec(); // Removed .lean() to keep Mongoose documents if needed
+
+    if (!bookings.length) {
+      throw new NotFoundException(
+        await this.i18n.translate('customer-operation.ERROR_NO_BOOKING_FOUND', { lang }),
+      );
+    }
+
+    return {
+      message: await this.i18n.translate('customer-operation.SUCCESS_BOOKINGS_FETCHED', { lang }),
+      totalBookings: bookings.length,
+      bookings: bookings.map((booking) => {
+        const asset = booking.asset as any;
+        const merchant = booking.merchant as any;
+        return {
+          bookingId: booking._id,
+          propertyName: asset?.name || 'N/A',
+          numberOfProperty: booking?.numberOfProperty || 0,
+          merchantEmail: merchant?.email || 'N/A',
+          merchantPhone: merchant?.phonenumber || 'N/A',
+          businessName: merchant?.businessName || 'N/A',
+          startDate: booking.startDate,
+          endDate: booking.endDate,
+          paymentProofPath: booking.paymentProofPath || 'no payment proven',
+          imageUrls: asset?.imageUrls || [],
+        };
+      }),
+    };
+  } catch (error) {
+    console.error('❌ Error fetching all bookings:', error);
+    throw new InternalServerErrorException(
+      await this.i18n.translate('customer-operation.ERROR_INTERNAL', { lang }),
+    );
+  }
+}
+
+// ===========================================================
+// 5️⃣ UPDATE BOOKING (BY MANAGER)
 // ===========================================================
 async updateBookingByManager(
-  bookingId: Types.ObjectId,
+  bookingId: string,
   updateData: Partial<Booking>,
   lang?: string,
 ) {
   try {
-    const booking = await this.bookingModel.findById(bookingId);
-    if (!booking) {
+    if (!Types.ObjectId.isValid(bookingId)) {
+      throw new BadRequestException('Invalid booking ID');
+    }
+
+    const updatedBooking = await this.bookingModel.findByIdAndUpdate(
+      bookingId,
+      updateData,
+      { new: true, runValidators: true }, // return updated doc + validate
+    );
+
+    if (!updatedBooking) {
       throw new NotFoundException(
         await this.i18n.translate('customer-operation.ERROR_BOOKING_NOT_FOUND', { lang }),
       );
     }
 
-    // Managers can update any fields
-    Object.assign(booking, updateData);
-
-    await booking.save();
-
     return {
       message: await this.i18n.translate('customer-operation.SUCCESS_BOOKING_UPDATED', { lang }),
-      updatedBooking: booking,
+      updatedBooking,
     };
   } catch (error) {
     console.error('❌ Error updating booking by manager:', error);
@@ -428,21 +448,24 @@ async updateBookingByManager(
 }
 
 // ===========================================================
-// DELETE BOOKING (BY MANAGER)
+// 6️⃣ DELETE BOOKING (BY MANAGER)
 // ===========================================================
 async deleteBookingByManager(
-  bookingId: Types.ObjectId,
+  bookingId: string,
   lang?: string,
 ) {
   try {
-    const booking = await this.bookingModel.findById(bookingId);
-    if (!booking) {
+    if (!Types.ObjectId.isValid(bookingId)) {
+      throw new BadRequestException('Invalid booking ID');
+    }
+
+    const deletedBooking = await this.bookingModel.findByIdAndDelete(bookingId);
+
+    if (!deletedBooking) {
       throw new NotFoundException(
         await this.i18n.translate('customer-operation.ERROR_BOOKING_NOT_FOUND', { lang }),
       );
     }
-
-    await this.bookingModel.deleteOne({ _id: bookingId });
 
     return {
       message: await this.i18n.translate('customer-operation.SUCCESS_BOOKING_DELETED', { lang }),
