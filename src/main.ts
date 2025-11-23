@@ -21,8 +21,8 @@ origin: [
   'http://localhost:5173',
   'https://customer-portal-111.onrender.com',
   "https://customer-portal-1.onrender.com",
-  "https://lmgsystem-tau.vercel.app/",
-  "https://lmgsystem-p7z3.vercel.app/",
+  "https://lmgsystem-tau.vercel.app",
+  "https://lmgsystem-p7z3.vercel.app",
   "https://lmg-system.onrender.com",
 "https://lmg-system-bfyr.onrender.com"
 ],
