@@ -272,65 +272,46 @@ async getPropertiesByCategory(category: string, lang?: string) {
       );
     }
   }
-// ===========================================================
-  // 1️⃣ GET MY PROFILE
-  // ===========================================================
+// ===================== GET PROFILE =====================
   async getMyProfile(customerId: string) {
-    try {
-      if (!Types.ObjectId.isValid(customerId)) {
-        throw new BadRequestException('Invalid customer ID.');
-      }
+    if (!Types.ObjectId.isValid(customerId)) throw new BadRequestException('Invalid customer ID.');
 
-      const customer = await this.userModel.findById(customerId).select('-password');
+    const customer = await this.userModel.findById(customerId).select('-password');
+    if (!customer) throw new NotFoundException('Customer not found.');
 
-      if (!customer) {
-        throw new NotFoundException('Customer not found.');
-      }
-
-      return {
-        id: customer._id,
-        fullName: customer.fullName,
-        email: customer.email,
-        phonenumber: customer.phonenumber,
-        address: customer.address,
-        profilePictureUrl: customer.profilePictureUrl || null,
-      };
-    } catch (err) {
-      console.error('❌ Failed to fetch profile:', err);
-      throw new InternalServerErrorException('Failed to fetch profile.');
-    }
+    return {
+      id: customer._id,
+      fullName: customer.fullName,
+      email: customer.email,
+      phonenumber: customer.phonenumber,
+      address: customer.address,
+      profilePictureUrl: customer.profilePictureUrl || null,
+    };
   }
 
-  // ===========================================================
-  // 2️⃣ UPDATE MY PROFILE
-  // ===========================================================
+  // ===================== UPDATE PROFILE =====================
   async updateMyProfile(
     customerId: string,
     updateData: any,
     profileImageFile?: Express.Multer.File,
   ) {
-    try {
-      if (!Types.ObjectId.isValid(customerId)) {
-        throw new BadRequestException('Invalid customer ID.');
-      }
+    if (!Types.ObjectId.isValid(customerId)) throw new BadRequestException('Invalid customer ID.');
 
-      // Only allow specific fields to be updated
+    try {
+      // Allow only specific fields
       const allowedFields = ['fullName', 'email', 'phonenumber', 'address'];
       const filteredUpdate: Record<string, any> = {};
 
       for (const key of Object.keys(updateData)) {
-        if (allowedFields.includes(key) && updateData[key] !== undefined) {
+        if (allowedFields.includes(key) && updateData[key] !== undefined && updateData[key] !== '') {
           filteredUpdate[key] = updateData[key];
         }
       }
 
-      // Upload new profile image (if provided)
+      // Upload profile image if provided
       if (profileImageFile) {
-        const profilePictureUrl = await this.cloudinaryService.uploadImage(
-          profileImageFile,
-          'customers',
-        );
-        filteredUpdate.profilePictureUrl = profilePictureUrl;
+        const url = await this.cloudinaryService.uploadImage(profileImageFile, 'customers');
+        filteredUpdate.profilePictureUrl = url;
       }
 
       if (Object.keys(filteredUpdate).length === 0) {
@@ -343,9 +324,7 @@ async getPropertiesByCategory(category: string, lang?: string) {
         { new: true, runValidators: true },
       ).select('-password');
 
-      if (!customer) {
-        throw new NotFoundException('Customer not found.');
-      }
+      if (!customer) throw new NotFoundException('Customer not found.');
 
       return {
         message: 'Profile updated successfully.',
@@ -358,12 +337,11 @@ async getPropertiesByCategory(category: string, lang?: string) {
           profilePictureUrl: customer.profilePictureUrl || null,
         },
       };
-    } catch (err) {
-      console.error('❌ Failed to update profile:', err);
+    } catch (error) {
+      console.error('❌ Failed to update profile:', error);
       throw new InternalServerErrorException('Failed to update profile.');
     }
   }
-
 
 // ===========================================================
 // 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL LOGGED-IN CUSTOMERS)

@@ -108,33 +108,29 @@ export class CustomerOperationsController {
       throw new InternalServerErrorException('Failed to upload payment proof.');
     }
   }
-  @Get('profile')
+ @Get('profile')
   @UseGuards(CustomerJwtAuthGuard)
   async getMyProfile(@Req() req) {
     try {
-      const customerId = req.user.sub; // Already a string
+      const customerId = req.user.sub;
       return await this.customerOpsService.getMyProfile(customerId);
     } catch (error) {
+      this.logger.error('❌ Failed to fetch profile:', error);
       throw new InternalServerErrorException('Failed to fetch profile.');
     }
   }
 
-  // ===========================================================
-  // 2️⃣ UPDATE MY PROFILE
-  // ===========================================================
+  // ===================== UPDATE PROFILE =====================
   @Patch('profile')
   @UseGuards(CustomerJwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('profileImage', {
       storage: memoryStorage(),
-      fileFilter: (req, file, callback) => {
+      fileFilter: (req, file, cb) => {
         if (!file.originalname.match(/\.(jpg|jpeg|png)$/i)) {
-          return callback(
-            new BadRequestException('Only JPG, JPEG, or PNG images are allowed!'),
-            false,
-          );
+          return cb(new BadRequestException('Only JPG, JPEG, or PNG images are allowed!'), false);
         }
-        callback(null, true);
+        cb(null, true);
       },
       limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
     }),
@@ -145,10 +141,10 @@ export class CustomerOperationsController {
     @Body() body: any,
   ) {
     try {
-      const customerId = req.user.sub; // Already a string
+      const customerId = req.user.sub;
       return await this.customerOpsService.updateMyProfile(customerId, body, file);
     } catch (error) {
-      console.error('❌ Error updating profile:', error);
+      this.logger.error('❌ Failed to update profile:', error);
       throw new InternalServerErrorException('Failed to update profile.');
     }
   }
