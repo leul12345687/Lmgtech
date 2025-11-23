@@ -109,7 +109,7 @@ export class CustomerOperationsController {
     }
   }
  @Get('profile')
-  @UseGuards(CustomerJwtAuthGuard)
+@UseGuards(CustomerJwtAuthGuard)
   async getMyProfile(@Req() req) {
     try {
       const customerId = req.user.sub;
@@ -122,7 +122,7 @@ export class CustomerOperationsController {
 
   // ===================== UPDATE PROFILE =====================
   @Patch('profile')
-  @UseGuards(CustomerJwtAuthGuard)
+ @UseGuards(CustomerJwtAuthGuard) // must be customer, not manager
   @UseInterceptors(
     FileInterceptor('profileImage', {
       storage: memoryStorage(),

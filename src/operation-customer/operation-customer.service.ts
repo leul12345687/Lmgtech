@@ -288,60 +288,82 @@ async getPropertiesByCategory(category: string, lang?: string) {
       profilePictureUrl: customer.profilePictureUrl || null,
     };
   }
+async updateMyProfile(
+  customerId: string,
+  updateData: any,
+  profileImageFile?: Express.Multer.File,
+) {
+  if (!Types.ObjectId.isValid(customerId)) {
+    throw new BadRequestException('Invalid customer ID.');
+  }
 
-  // ===================== UPDATE PROFILE =====================
-  async updateMyProfile(
-    customerId: string,
-    updateData: any,
-    profileImageFile?: Express.Multer.File,
-  ) {
-    if (!Types.ObjectId.isValid(customerId)) throw new BadRequestException('Invalid customer ID.');
+  try {
+    // 1️⃣ Log incoming data for debugging
+    this.logger.log(`🔹 Customer ID: ${customerId}`);
+    this.logger.log('🔹 Raw updateData received:', updateData);
+    if (profileImageFile) this.logger.log('🔹 Profile image received:', profileImageFile.originalname);
 
-    try {
-      // Allow only specific fields
-      const allowedFields = ['fullName', 'email', 'phonenumber', 'address'];
-      const filteredUpdate: Record<string, any> = {};
+    // 2️⃣ Allow only specific fields
+    const allowedFields = ['fullName', 'email', 'phonenumber', 'address'];
+    const filteredUpdate: Record<string, any> = {};
 
-      for (const key of Object.keys(updateData)) {
-        if (allowedFields.includes(key) && updateData[key] !== undefined && updateData[key] !== '') {
-          filteredUpdate[key] = updateData[key];
-        }
+    for (const key of Object.keys(updateData)) {
+      if (
+        allowedFields.includes(key) &&
+        updateData[key] !== undefined &&
+        updateData[key] !== null &&
+        updateData[key].toString().trim() !== ''
+      ) {
+        filteredUpdate[key] = updateData[key].toString().trim();
       }
+    }
 
-      // Upload profile image if provided
-      if (profileImageFile) {
+    // 3️⃣ Upload profile image if provided
+    if (profileImageFile) {
+      try {
         const url = await this.cloudinaryService.uploadImage(profileImageFile, 'customers');
         filteredUpdate.profilePictureUrl = url;
+        this.logger.log('✅ Profile image uploaded to Cloudinary:', url);
+      } catch (cloudErr) {
+        this.logger.error('❌ Cloudinary upload failed:', cloudErr);
+        throw new InternalServerErrorException('Failed to upload profile image.');
       }
-
-      if (Object.keys(filteredUpdate).length === 0) {
-        throw new BadRequestException('No valid fields provided for update.');
-      }
-
-      const customer = await this.userModel.findByIdAndUpdate(
-        customerId,
-        { $set: filteredUpdate },
-        { new: true, runValidators: true },
-      ).select('-password');
-
-      if (!customer) throw new NotFoundException('Customer not found.');
-
-      return {
-        message: 'Profile updated successfully.',
-        updatedCustomer: {
-          id: customer._id,
-          fullName: customer.fullName,
-          email: customer.email,
-          phonenumber: customer.phonenumber,
-          address: customer.address,
-          profilePictureUrl: customer.profilePictureUrl || null,
-        },
-      };
-    } catch (error) {
-      console.error('❌ Failed to update profile:', error);
-      throw new InternalServerErrorException('Failed to update profile.');
     }
+
+    // 4️⃣ Check if there's anything to update
+    if (Object.keys(filteredUpdate).length === 0) {
+      throw new BadRequestException('No valid fields provided for update.');
+    }
+
+    // 5️⃣ Update the user in DB
+    const customer = await this.userModel
+      .findByIdAndUpdate(customerId, { $set: filteredUpdate }, { new: true, runValidators: true })
+      .select('-password');
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found.');
+    }
+
+    this.logger.log('✅ Profile updated successfully:', customer);
+
+    return {
+      message: 'Profile updated successfully.',
+      updatedCustomer: {
+        id: customer._id,
+        fullName: customer.fullName,
+        email: customer.email,
+        phonenumber: customer.phonenumber,
+        address: customer.address,
+        profilePictureUrl: customer.profilePictureUrl || null,
+      },
+    };
+  } catch (error) {
+    this.logger.error('❌ Failed to update profile:', error);
+    // Return the error message if available
+    const msg = error?.response?.message || error?.message || 'Failed to update profile.';
+    throw new InternalServerErrorException(msg);
   }
+}
 
 // ===========================================================
 // 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL LOGGED-IN CUSTOMERS)
