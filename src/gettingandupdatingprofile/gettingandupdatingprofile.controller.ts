@@ -43,8 +43,8 @@ export class CustomerOperationsController {
   // =====================================================
   // 2️⃣ UPDATE CUSTOMER PROFILE
   // =====================================================
-  @Patch('profile')
-  @UseGuards(CustomerJwtAuthGuard)
+  @Patch('updatingprofile')
+ 
   @UseInterceptors(
     FileInterceptor('profileImage', {
       storage: memoryStorage(),
