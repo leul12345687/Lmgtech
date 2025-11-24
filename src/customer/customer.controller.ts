@@ -87,7 +87,7 @@ export class CustomerController {
   }
 
   // 🛑 4. UPDATE CUSTOMER (General Update/Password Reset)
-  @Patch(':id')
+  @Patch('admin/customers/:id')
  
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true })) // Keep validation for basic checks
   async updateCustomer(
