@@ -119,35 +119,46 @@ export class CustomerOperationsController {
       throw new InternalServerErrorException('Failed to fetch profile.');
     }
   }
+// ===================== UPDATE PROFILE =====================
+@Patch('profile')
+@UseGuards(CustomerJwtAuthGuard) // must be customer, not manager
+@UseInterceptors(
+  FileInterceptor('profileImage', {
+    storage: memoryStorage(),
+    fileFilter: (req, file, cb) => {
+      if (!file.originalname.match(/\.(jpg|jpeg|png)$/i)) {
+        return cb(new BadRequestException('Only JPG, JPEG, or PNG images are allowed!'), false);
+      }
+      cb(null, true);
+    },
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  }),
+)
+async updateMyProfile(
+  @Req() req,
+  @UploadedFile() file: Express.Multer.File,
+  @Body() body: any,
+) {
+  console.log('➡️ PATCH /customer/profile called');
+  console.log('Request headers:', req.headers);
+  console.log('Request query:', req.query);
+  console.log('Request body (form fields):', body);
+  console.log('Uploaded file info:', file ? { originalname: file.originalname, size: file.size } : null);
 
-  // ===================== UPDATE PROFILE =====================
-  @Patch('profile')
- @UseGuards(CustomerJwtAuthGuard) // must be customer, not manager
-  @UseInterceptors(
-    FileInterceptor('profileImage', {
-      storage: memoryStorage(),
-      fileFilter: (req, file, cb) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png)$/i)) {
-          return cb(new BadRequestException('Only JPG, JPEG, or PNG images are allowed!'), false);
-        }
-        cb(null, true);
-      },
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-    }),
-  )
-  async updateMyProfile(
-    @Req() req,
-    @UploadedFile() file: Express.Multer.File,
-    @Body() body: any,
-  ) {
-    try {
-      const customerId = req.user.sub;
-      return await this.customerOpsService.updateMyProfile(customerId, body, file);
-    } catch (error) {
-      this.logger.error('❌ Failed to update profile:', error);
-      throw new InternalServerErrorException('Failed to update profile.');
-    }
+  try {
+    const customerId = req.user.sub;
+    console.log('Authenticated user from CustomerJwtAuthGuard:', req.user);
+
+    const result = await this.customerOpsService.updateMyProfile(customerId, body, file);
+
+    console.log('✅ Profile update result:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Failed to update profile:', error);
+    throw new InternalServerErrorException('Failed to update profile.');
   }
+}
+
 // ===========================================================
 // 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL CUSTOMERS)
 // ===========================================================
