@@ -88,7 +88,7 @@ export class CustomerController {
 
   // 🛑 4. UPDATE CUSTOMER (General Update/Password Reset)
   @Patch('admin/customers/:id')
- 
+  @UseGuards(ManagerJwtAuthGuard) // 🔒 Protected by Admin/Manager Guard
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true })) // Keep validation for basic checks
   async updateCustomer(
     @Param('id') customerId: string,
