@@ -16,6 +16,7 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SmsModule } from './notifications/sms.module';
+import { ProfileModule  } from './gettingandupdatingprofile/gettingandupdatingprofile.module';
 
 import * as path from 'path';
 
@@ -71,7 +72,7 @@ import * as path from 'path';
     NotificationsModule,
     SmsModule,
     ScheduleModule.forRoot(),
-      // ✅ VERY IMPORTANT
+    ProfileModule ,   // ✅ VERY IMPORTANT
   ],
   controllers: [AppController, ],
   providers: [AppService, ],

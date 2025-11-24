@@ -18,9 +18,9 @@ import { AdminModule } from './admin.module';
                 signOptions: { expiresIn: '1h' },
             }),
         }),
-        AdminModule, // Import TellerModule
+        AdminModule, 
     ],
-    providers: [ManagerJwtStrategy], // Provide TellerJwtStrategy
+    providers: [ManagerJwtStrategy], 
     exports: [JwtModule, PassportModule, ManagerJwtStrategy], // Export necessary components
 })
 export class AdminAuthModule {}
