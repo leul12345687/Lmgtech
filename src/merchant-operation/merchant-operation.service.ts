@@ -2,7 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  InternalServerErrorException,
+  InternalServerErrorException,Logger
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -11,9 +11,11 @@ import { Booking, BookingDocument } from '../booking/booking.schema';
 import { Asset, AssetDocument } from '../property/property.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { BookingStatus } from '../booking/booking.schema';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 import * as bcrypt from 'bcryptjs';
 @Injectable()
 export class MerchantOperationService {
+   private readonly logger = new Logger( MerchantOperationService.name);
   constructor(
     @InjectModel(Booking.name)
     private readonly bookingModel: Model<BookingDocument>,
@@ -22,100 +24,142 @@ export class MerchantOperationService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly i18n: I18nService,
+     private readonly cloudinaryService: CloudinaryService,
   ) {}
 
 
+// 1️⃣ GET MY PROFILE
+  // =====================================================
+  async getMerchantProfile(merchantId: string) {
+    if (!Types.ObjectId.isValid(merchantId)) {
+      throw new BadRequestException('Invalid merchant ID.');
+    }
 
-  // ===================================================
-// 0️⃣ Fetch logged-in merchant profile
-// ===================================================
-async getMerchantProfile(merchantId: Types.ObjectId, lang: string) {
-  try {
     const merchant = await this.userModel
       .findById(merchantId)
-      .select(
-        'email fullName phonenumber acountnumber businessName address profilePicture'
-      )
-      .lean();
+      .select('-password');
 
     if (!merchant) {
-      throw new NotFoundException(
-        await this.i18n.translate('merchant-operation.ERROR_MERCHANT_NOT_FOUND', { lang }),
-      );
+      throw new NotFoundException('Merchant not found.');
     }
 
     return {
-      message: await this.i18n.translate('merchant-operation.SUCCESS_MERCHANT_PROFILE_FETCHED', { lang }),
-      profile: merchant,
+      id: merchant._id,
+      fullName: merchant.fullName,
+      email: merchant.email,
+      phonenumber: merchant.phonenumber,
+      acountnumber: merchant.acountnumber,
+      businessName: merchant.businessName,
+      address: merchant.address,
+      profilePictureUrl: merchant.profilePictureUrl || null,
     };
-  } catch (error) {
-    console.error('❌ Error fetching merchant profile:', error);
-    throw new InternalServerErrorException('Failed to fetch merchant profile.');
   }
-}
 
+  // =====================================================
+  // 2️⃣ UPDATE PROFILE
+  // =====================================================
+  async updateMerchantProfile(
+    merchantId: string,
+    updateData: any,
+    profileImageFile?: Express.Multer.File,
+  ) {
+    if (!Types.ObjectId.isValid(merchantId)) {
+      throw new BadRequestException('Invalid merchant ID.');
+    }
 
-
-async updateMerchantProfile(
-  merchantId: Types.ObjectId,
-  updateData: any,
-  profilePictureFile: Express.Multer.File,
-  lang: string,
-) {
-  try {
-    const updateFields: any = {};
-
-    // 1️⃣ Basic fields
-    const allowedFields = [
-      'email',
-      'fullName',
-      'phonenumber',
-      'acountnumber',
-      'businessName',
-      'address',
-    ];
-
-    allowedFields.forEach((field) => {
-      if (updateData[field] !== undefined) {
-        updateFields[field] = updateData[field];
+    try {
+      this.logger.log('🔹 Update request:', updateData);
+      if (profileImageFile) {
+        this.logger.log(
+          `🔹 Uploaded image: ${profileImageFile.originalname}, size: ${profileImageFile.size}`,
+        );
       }
-    });
 
-    // 2️⃣ Password update (hash it)
-    if (updateData.password) {
-      updateFields.password = await bcrypt.hash(updateData.password, 10);
-    }
+      // Allowed updatable fields
+      const allowedFields = [
+        'fullName',
+        'email',
+        'phonenumber',
+        'acountnumber',
+        'businessName',
+        'address',
+        'password',
+      ];
 
-    // 3️⃣ Profile picture upload
-    if (profilePictureFile) {
-      updateFields.profilePicture = profilePictureFile.filename; 
-      // You may use full URL if needed:
-      // updateFields.profilePicture = `/uploads/${profilePictureFile.filename}`;
-    }
+      const filteredUpdate: Record<string, any> = {};
 
-    const updatedMerchant = await this.userModel
-      .findByIdAndUpdate(merchantId, updateFields, { new: true })
-      .select(
-        'email fullName phonenumber acountnumber businessName address profilePicture'
+      for (const key of Object.keys(updateData)) {
+        const value = updateData[key];
+
+        if (
+          allowedFields.includes(key) &&
+          value !== undefined &&
+          value !== null &&
+          value.toString().trim() !== ''
+        ) {
+          filteredUpdate[key] = value.toString().trim();
+        }
+      }
+
+      // Hash password only if provided
+      if (filteredUpdate.password) {
+        filteredUpdate.password = await bcrypt.hash(filteredUpdate.password, 10);
+      }
+
+      // Upload profile image if provided
+      if (profileImageFile) {
+        try {
+          const url = await this.cloudinaryService.uploadImage(
+            profileImageFile,
+            'merchants',
+          );
+
+          filteredUpdate.profilePictureUrl = url;
+
+          this.logger.log('✅ Cloudinary upload success:', url);
+        } catch (cloudErr) {
+          this.logger.error('❌ Cloudinary upload failed:', cloudErr);
+          throw new InternalServerErrorException('Failed to upload image.');
+        }
+      }
+
+      if (Object.keys(filteredUpdate).length === 0) {
+        throw new BadRequestException('No valid fields provided.');
+      }
+
+      // Update merchant in DB
+      const updatedMerchant = await this.userModel
+        .findByIdAndUpdate(
+          merchantId,
+          { $set: filteredUpdate },
+          { new: true },
+        )
+        .select('-password');
+
+      if (!updatedMerchant) {
+        throw new NotFoundException('Merchant not found.');
+      }
+
+      return {
+        message: 'Profile updated successfully.',
+        updatedMerchant: {
+          id: updatedMerchant._id,
+          fullName: updatedMerchant.fullName,
+          email: updatedMerchant.email,
+          phonenumber: updatedMerchant.phonenumber,
+          acountnumber: updatedMerchant.acountnumber,
+          businessName: updatedMerchant.businessName,
+          address: updatedMerchant.address,
+          profilePictureUrl: updatedMerchant.profilePictureUrl || null,
+        },
+      };
+    } catch (error) {
+      this.logger.error('❌ Merchant profile update error:', error);
+      throw new InternalServerErrorException(
+        error?.message || 'Failed to update profile.',
       );
-
-    if (!updatedMerchant) {
-      throw new NotFoundException(
-        await this.i18n.translate('merchant-operation.ERROR_MERCHANT_NOT_FOUND', { lang }),
-      );
     }
-
-    return {
-      message: await this.i18n.translate('merchant-operation.SUCCESS_MERCHANT_PROFILE_UPDATED', { lang }),
-      profile: updatedMerchant,
-    };
-  } catch (error) {
-    console.error('❌ Error updating merchant profile:', error);
-    throw new InternalServerErrorException('Failed to update merchant profile.');
   }
-}
-
-
 
   // ===================================================
   // 1️⃣ Get all bookings for this merchant
