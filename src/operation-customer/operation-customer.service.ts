@@ -97,6 +97,7 @@ async getPropertiesByCategory(category: string, lang?: string) {
         rentalPrice: {
           perHour: asset.rentalPriceperhour,
           perDay: asset.rentalPriceperday,
+          perWeek: asset.rentalPriceperweek,
           perMonth: asset.rentalPricepermonth,
           perYear: asset.rentalPriceperyear,
         },

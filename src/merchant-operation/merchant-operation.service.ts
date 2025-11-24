@@ -132,6 +132,7 @@ export class MerchantOperationService {
         rentalPrice: {
           perHour: p.rentalPriceperhour,
           perDay: p.rentalPriceperday,
+          perWeek: p.rentalPriceperweek,
           perMonth: p.rentalPricepermonth,
           perYear: p.rentalPriceperyear,
         },

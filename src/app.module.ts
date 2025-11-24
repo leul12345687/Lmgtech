@@ -70,9 +70,10 @@ import * as path from 'path';
     MerchantOperationModule,
     NotificationsModule,
     SmsModule,
-    ScheduleModule.forRoot(),   // ✅ VERY IMPORTANT
+    ScheduleModule.forRoot(),
+      // ✅ VERY IMPORTANT
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [AppController, ],
+  providers: [AppService, ],
 })
 export class AppModule {}

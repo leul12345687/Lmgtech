@@ -3,7 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
-
+import {AdminAuthModule } from 'src/admin/AdminAuthmodule'; // NEW: ensures ManagerJwtAuthGuard works
 import { CustomerOperationsController } from './operation-customer.controller';
 import { CustomerOperationsService } from './operation-customer.service';
 
@@ -26,7 +26,7 @@ import { CustomerAuthModule } from 'src/customer/customerAuthMoodule';
       { name: User.name, schema: UserSchema },
     ]),
 
-    CustomerAuthModule,
+    CustomerAuthModule,AdminAuthModule,
 
     // 🔐 JWT for auth verification
     JwtModule.registerAsync({
