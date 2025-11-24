@@ -109,7 +109,7 @@ export class MerchantController {
 
    // 🟠 UPDATE MERCHANT (Admin only)
   // ===========================================================
-  @Put(':id')
+  @Put('admin/update/:id')
   @UseGuards(ManagerJwtAuthGuard)
   @UseInterceptors(FileInterceptor('profilePictureFile'))
   async updateMerchant(

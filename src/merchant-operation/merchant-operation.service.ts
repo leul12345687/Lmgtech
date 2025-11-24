@@ -11,7 +11,7 @@ import { Booking, BookingDocument } from '../booking/booking.schema';
 import { Asset, AssetDocument } from '../property/property.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { BookingStatus } from '../booking/booking.schema';
-
+import * as bcrypt from 'bcryptjs';
 @Injectable()
 export class MerchantOperationService {
   constructor(
@@ -23,6 +23,99 @@ export class MerchantOperationService {
     private readonly userModel: Model<UserDocument>,
     private readonly i18n: I18nService,
   ) {}
+
+
+
+  // ===================================================
+// 0️⃣ Fetch logged-in merchant profile
+// ===================================================
+async getMerchantProfile(merchantId: Types.ObjectId, lang: string) {
+  try {
+    const merchant = await this.userModel
+      .findById(merchantId)
+      .select(
+        'email fullName phonenumber acountnumber businessName address profilePicture'
+      )
+      .lean();
+
+    if (!merchant) {
+      throw new NotFoundException(
+        await this.i18n.translate('merchant-operation.ERROR_MERCHANT_NOT_FOUND', { lang }),
+      );
+    }
+
+    return {
+      message: await this.i18n.translate('merchant-operation.SUCCESS_MERCHANT_PROFILE_FETCHED', { lang }),
+      profile: merchant,
+    };
+  } catch (error) {
+    console.error('❌ Error fetching merchant profile:', error);
+    throw new InternalServerErrorException('Failed to fetch merchant profile.');
+  }
+}
+
+
+
+async updateMerchantProfile(
+  merchantId: Types.ObjectId,
+  updateData: any,
+  profilePictureFile: Express.Multer.File,
+  lang: string,
+) {
+  try {
+    const updateFields: any = {};
+
+    // 1️⃣ Basic fields
+    const allowedFields = [
+      'email',
+      'fullName',
+      'phonenumber',
+      'acountnumber',
+      'businessName',
+      'address',
+    ];
+
+    allowedFields.forEach((field) => {
+      if (updateData[field] !== undefined) {
+        updateFields[field] = updateData[field];
+      }
+    });
+
+    // 2️⃣ Password update (hash it)
+    if (updateData.password) {
+      updateFields.password = await bcrypt.hash(updateData.password, 10);
+    }
+
+    // 3️⃣ Profile picture upload
+    if (profilePictureFile) {
+      updateFields.profilePicture = profilePictureFile.filename; 
+      // You may use full URL if needed:
+      // updateFields.profilePicture = `/uploads/${profilePictureFile.filename}`;
+    }
+
+    const updatedMerchant = await this.userModel
+      .findByIdAndUpdate(merchantId, updateFields, { new: true })
+      .select(
+        'email fullName phonenumber acountnumber businessName address profilePicture'
+      );
+
+    if (!updatedMerchant) {
+      throw new NotFoundException(
+        await this.i18n.translate('merchant-operation.ERROR_MERCHANT_NOT_FOUND', { lang }),
+      );
+    }
+
+    return {
+      message: await this.i18n.translate('merchant-operation.SUCCESS_MERCHANT_PROFILE_UPDATED', { lang }),
+      profile: updatedMerchant,
+    };
+  } catch (error) {
+    console.error('❌ Error updating merchant profile:', error);
+    throw new InternalServerErrorException('Failed to update merchant profile.');
+  }
+}
+
+
 
   // ===================================================
   // 1️⃣ Get all bookings for this merchant
@@ -253,5 +346,9 @@ export class MerchantOperationService {
       message: await this.i18n.translate('merchant-operation.SUCCESS_BOOKING_DELETED', { lang }),
     };
   }
+
+
+
+
 }
 
