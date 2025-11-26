@@ -1,10 +1,10 @@
 // src/property/dto/create-asset.dto.ts
-import { IsString, IsNumber, IsEnum, IsNotEmpty, Min } from 'class-validator';
+import { IsString, IsNumber, IsEnum, IsNotEmpty, Min,IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AssetCategory } from './property.schema';
 
 export class CreateAssetDto {
-  @IsString()
+ @IsString()
   @IsNotEmpty()
   name: string;
 
@@ -12,11 +12,12 @@ export class CreateAssetDto {
   @IsNotEmpty()
   description: string;
 
-  @IsString()
- customCategory:string;
-
   @IsEnum(AssetCategory)
   category: AssetCategory;
+
+  @IsString()
+  @IsOptional()
+  customCategory?: string;
 
   @Type(() => Number)
   @IsNumber()
