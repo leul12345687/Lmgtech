@@ -98,6 +98,7 @@ export class PropertyService {
       name,
       description,
       category,
+      customCategory: category === AssetCategory.OTHER ? customCategory : null,
       rentalPriceperday,
       rentalPriceperhour,
       rentalPriceperweek,
