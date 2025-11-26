@@ -76,7 +76,6 @@ export class Booking {
 
   @Prop({ default: 0 })
   securityDeposit: number;
-
   // ============================
   // PAYMENT PROCESSING
   // ============================
@@ -148,8 +147,7 @@ expiresAt: Date | null;
    // ============================
   // PAYMENT AMOUNTS
   // ============================
-  @Prop({ required: true })
-  grossAmount: number;
+ 
 
   @Prop({ default: 'ETB' })
   currency: string;
@@ -158,13 +156,13 @@ expiresAt: Date | null;
 // ============================
 
 
-@Prop({ required: true })
+@Prop({ required:false })
 netAmount: number; // merchant share
 
-@Prop({ required: true })
+@Prop({ required: false })
 vatAmount: number;
 
-@Prop({ required: true })
+@Prop({ required:false })
 vatRate: number;
 
 // ============================
