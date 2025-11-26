@@ -14,7 +14,8 @@ export enum BookingStatus {
 export enum PaymentStatus {
   UNPAID = 'UNPAID',
   PENDING = 'PENDING',
-  PAID = 'PAID',
+  PAID = 'PAID', 
+  PENDING_REVIEW = 'PENDING_REVIEW', // ✅ ADD THIS
   EXPIRED = 'EXPIRED'
 }
 
