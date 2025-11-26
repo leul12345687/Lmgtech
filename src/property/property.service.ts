@@ -14,6 +14,7 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 export interface ICreateAssetPayload {
   name: string;
   description: string;
+  customCategory?: string; // ✅ Added '?' to make it optional
   category: AssetCategory;
   rentalPriceperday: number;
   rentalPriceperhour: number;
@@ -51,6 +52,7 @@ export class PropertyService {
       rentalPricepermonth,
       rentalPriceperyear,
       numberOfProperty,
+      customCategory,
       imageFiles,
     } = assetPayload;
 
@@ -59,28 +61,37 @@ export class PropertyService {
     const successMessage = await this.i18n.translate('property.SUCCESS_PROPERTY_CREATED', { lang });
     const notMerchantError = await this.i18n.translate('property.ERROR_NOT_MERCHANT', { lang });
 
-    // 🔍 Validate merchant role
+    //1,🔍 Validate merchant role
     const merchant = await this.userModel.findById(merchantId).exec();
     if (!merchant || merchant.role !== UserRole.MERCHANT) {
       throw new ForbiddenException(notMerchantError);
     }
+// 2. Validate "Other" Category Logic
+  if (category === AssetCategory.OTHER && (!customCategory || customCategory.trim() === '')) {
+    throw new BadRequestException(
+      await this.i18n.translate('property.ERROR_SPECIFY_OTHER_CATEGORY', { lang })
+    );
+  }
 
-    // 🖼️ Validate and upload images
-    if (!imageFiles || imageFiles.length === 0) {
-      throw new BadRequestException(missingFieldsError);
-    }
+  // 3. Image Validation
+  if (!imageFiles || imageFiles.length === 0) {
+    throw new BadRequestException(
+      await this.i18n.translate('property.ERROR_REQUIRED_FIELDS', { lang })
+    );
+  }
 
-    const imageUrls: string[] = [];
-    try {
-      for (const file of imageFiles) {
-        const uploadedUrl = await this.cloudinaryService.uploadImage(file, 'property-images');
-        if (uploadedUrl) imageUrls.push(uploadedUrl);
-      }
-    } catch (error) {
-      console.error('❌ Cloudinary upload failed:', error);
-      throw new InternalServerErrorException('Failed to upload images to Cloudinary.');
-    }
-
+  // 4. Optimized Parallel Uploads
+  // Promise.all is much faster than a for-loop for multiple images
+  let imageUrls: string[] = [];
+  try {
+    const uploadPromises = imageFiles.map((file) =>
+      this.cloudinaryService.uploadImage(file, 'property-images'),
+    );
+    imageUrls = await Promise.all(uploadPromises);
+  } catch (error) {
+    
+    throw new InternalServerErrorException('Failed to upload images to Cloudinary.');
+  }
     // 💾 Create the asset record
     const newAsset = new this.assetModel({
       merchant: merchantId,

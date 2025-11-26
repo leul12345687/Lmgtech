@@ -722,11 +722,11 @@ private async notifyBookingCreatedPaymentRequired(
       customer.email,
       'Booking Created — Payment Required',
       `<p>Hello ${customer.fullName},</p>
-       <p>Your booking for <strong>${asset.name}</strong> is pending payment.</p>
-       <p>Gross Amount (VAT included): <strong>${amount}</strong></p>
-       <p>Payment Reference: <strong>${ref}</strong></p>
-       <p>Account Number: <strong>${accountNumber}</strong></p>
-       <p>Expires At (ET): <strong>${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}</strong></p>`
+       <p>Your booking for ${asset.name} is pending payment.</p>
+       <p>Gross Amount (VAT included): ${amount}</p>
+       <p>Payment Reference:${ref}></p>
+       <p>Account Number:${accountNumber}</p>
+       <p>Expires At (ET):${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}</p>`
     );
   } catch (err) {
     this.logger.warn(`Failed to send booking-created email to customer: ${err?.message}`);
@@ -750,7 +750,7 @@ private async notifyBookingCreatedPaymentRequired(
       merchant.email,
       'New Booking — Awaiting Payment',
       `<p>Hello ${merchant.businessName || merchant.fullName},</p>
-       <p>Booking created for <strong>${asset.name}</strong>.</p>
+       <p>Booking created for${asset.name}.</p>
        <p>Customer: ${customer.fullName} (${customer.email})</p>
        <p>Gross Amount: ${amount}</p>
        <p>Payment Reference: <strong>${ref}</strong></p>`

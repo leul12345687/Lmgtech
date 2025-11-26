@@ -30,16 +30,20 @@ export class PropertyController {
     private readonly i18n: I18nService,
   ) {}
 
-  // ==========================================================
-  // 📦 CREATE PROPERTY (Uploads images to Cloudinary)
-  // ==========================================================
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(MerchantJwtAuthGuard)
   @UseInterceptors(
     FilesInterceptor('images', 5, {
-      storage: memoryStorage(), // ✅ Store files in memory for Cloudinary
-      limits: { fileSize: 10 * 1024 * 1024 }, // Max 10MB per file
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+      fileFilter: (req, file, callback) => {
+        // Optional: Ensure only images are uploaded
+        if (!file.mimetype.match(/\/(jpg|jpeg|png|webp)$/)) {
+          return callback(new BadRequestException('Only image files are allowed!'), false);
+        }
+        callback(null, true);
+      },
     }),
   )
   async create(
@@ -48,41 +52,31 @@ export class PropertyController {
     @Req() req: any,
     @I18nLang() lang: string,
   ): Promise<{ message: string; asset: AssetDocument }> {
-    this.logger.log('📥 Received property creation request');
+    this.logger.log(`📥 Received request from Merchant: ${req.user?.sub}`);
 
-    // ✅ Validate files
+    // 1. Validate files exist
     if (!files || files.length === 0) {
-      const missingImageError = await this.i18n.translate('property.ERROR_IMAGE_REQUIRED', { lang });
-      this.logger.error('❌ No images uploaded');
-      throw new BadRequestException(missingImageError);
+      throw new BadRequestException(
+        await this.i18n.translate('property.ERROR_IMAGE_REQUIRED', { lang })
+      );
     }
 
-    this.logger.log(`🖼️ ${files.length} image(s) received`);
-
-    // ✅ Validate Merchant ID from JWT
+    // 2. Validate Merchant ID from Request (added safer check)
     const merchantId = req.user?.sub;
-    if (!merchantId || !Types.ObjectId.isValid(merchantId)) {
-      this.logger.error('❌ Invalid or missing merchant ID in JWT token');
-      throw new BadRequestException('Invalid or missing merchant ID in token');
+    if (!Types.ObjectId.isValid(merchantId)) {
+      throw new BadRequestException('Invalid authentication credentials.');
     }
 
-    // ✅ Prepare data for service
-    const createAssetPayload: ICreateAssetPayload = {
-      ...payload,
-      imageFiles: files,
-    };
-
-    this.logger.log('🚀 Creating property via PropertyService...');
-
-    // ✅ Delegate to service
-    const result = await this.propertyService.createProperty(
+    // 3. Delegate to service
+    // We pass the payload and files separately or combined as per the interface
+    return await this.propertyService.createProperty(
       new Types.ObjectId(merchantId),
-      createAssetPayload,
+      {
+        ...payload,
+        imageFiles: files,
+      },
       lang,
     );
-
-    this.logger.log('✅ Property created successfully');
-    return result;
   }
 
 

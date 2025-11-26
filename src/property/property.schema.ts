@@ -34,7 +34,8 @@ priceUnit:string;
   @Prop({ required: true, type: Number })
   rentalPriceperday: number;
   
-  
+@Prop({ required: false, trim: true })
+customCategory?: string; // This stores the specific name if "Other" is chosen
   @Prop({ required: true, type: Number })
   rentalPriceperhour: number;
   
