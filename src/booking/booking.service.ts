@@ -64,7 +64,7 @@ export class BookingService {
   // netAmount = gross / (1 + VAT_RATE)
   // vatAmount = gross - netAmount
   // ===================================================
-  public async createBookingForPayment(
+ public async createBookingForPayment(
   customerId: Types.ObjectId,
   assetName: string,
   merchantEmail: string,
@@ -92,20 +92,25 @@ export class BookingService {
   }
 
   /* ===============================
-     2️⃣ LOAD USERS
+     2️⃣ LOAD MERCHANT & CUSTOMER
   =============================== */
   const merchant = await this.userModel.findOne({
     email: merchantEmail,
     role: UserRole.MERCHANT,
   });
-  if (!merchant) throw new NotFoundException('Merchant not found');
+
+  if (!merchant) {
+    throw new NotFoundException('Merchant not found');
+  }
 
   const customer = await this.userModel.findById(customerId);
-  if (!customer) throw new NotFoundException('Customer not found');
+  if (!customer) {
+    throw new NotFoundException('Customer not found');
+  }
 
   /* ===============================
-     3️⃣ MERCHANT ACCOUNT NUMBER (CBE)
-     🔴 SINGLE SOURCE OF TRUTH
+     3️⃣ MERCHANT BANK ACCOUNT (CBE)
+     ✅ SINGLE SOURCE OF TRUTH
   =============================== */
   if (!merchant.acountnumber) {
     throw new BadRequestException(
@@ -126,7 +131,10 @@ export class BookingService {
     merchant: merchant._id,
   });
 
-  if (!asset) throw new NotFoundException('Asset not found');
+  if (!asset) {
+    throw new NotFoundException('Asset not found');
+  }
+
   if (asset.status !== AssetStatus.AVAILABLE) {
     throw new BadRequestException('Asset is not available');
   }
@@ -152,11 +160,13 @@ export class BookingService {
   }
 
   if (endUTC <= startUTC) {
-    throw new BadRequestException('End date must be after start date');
+    throw new BadRequestException(
+      'End date must be after start date',
+    );
   }
 
   /* ===============================
-     6️⃣ DURATION & PRICE
+     6️⃣ DURATION & UNIT PRICE
   =============================== */
   const numberOfUnits = this.calculateDuration(
     startUTC,
@@ -177,6 +187,7 @@ export class BookingService {
   };
 
   const pricePerUnit = priceMap[timeInterval];
+
   if (!pricePerUnit || pricePerUnit <= 0) {
     throw new BadRequestException(
       'Price not configured for selected time interval',
@@ -202,22 +213,25 @@ export class BookingService {
      8️⃣ PAYMENT REFERENCE & EXPIRY
   =============================== */
   const externalPaymentRef = this.generateReference();
+
   const expiresAt = moment()
     .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
     .toDate();
 
   /* ===============================
-     9️⃣ TRANSACTION
+     9️⃣ DB TRANSACTION
   =============================== */
   const session = await this.bookingModel.db.startSession();
   session.startTransaction();
 
   try {
-    // Availability check
+    /* ---- Availability Check ---- */
     const overlapping = await this.bookingModel
       .find({
         asset: asset._id,
-        status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+        status: {
+          $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+        },
         startDate: { $lte: endUTC },
         endDate: { $gte: startUTC },
       })
@@ -237,6 +251,7 @@ export class BookingService {
       );
     }
 
+    /* ---- Create Booking ---- */
     const [booking] = await this.bookingModel.create(
       [
         {
@@ -268,7 +283,6 @@ export class BookingService {
             customerEmail: customer.email,
             customerPhone: customer.phonenumber,
             assetName: asset.name,
-            merchantAccountNumber,
           },
         },
       ],
@@ -278,6 +292,9 @@ export class BookingService {
     await session.commitTransaction();
     session.endSession();
 
+    /* ===============================
+       🔔 NOTIFY
+    =============================== */
     await this.notifyBookingCreatedPaymentRequired(
       booking,
       customer,
@@ -286,17 +303,18 @@ export class BookingService {
     );
 
     /* ===============================
-       🔟 RESPONSE TO CLIENT
+       🔟 RESPONSE TO FRONTEND
+       ✅ THIS FIXES "— ETB"
     =============================== */
     return {
       paymentReference: externalPaymentRef,
-      amount: totalPriceGross,
+      totalPrice: totalPriceGross,
+      netAmount,
+      vatAmount,
+      vatRate: this.VAT_RATE,
       currency: 'ETB',
-      bank: 'Commercial Bank of Ethiopia',
       accountNumber: merchantAccountNumber,
       expiresAt,
-      vatAmount,
-      netAmount,
       message:
         'Booking created. Pay the gross amount (VAT included) to the account number using the reference before expiry.',
     };
@@ -316,6 +334,7 @@ export class BookingService {
         );
   }
 }
+
 
 
   // ===================================================
