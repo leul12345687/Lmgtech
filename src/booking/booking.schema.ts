@@ -91,7 +91,7 @@ export class Booking {
   @Prop({ default: null })
   externalPaymentRef?: string;
 
-  @Prop({ default: null })
+  @Prop({ type: Date, required: false, default: null })
 expiresAt: Date | null;
   // merchant bank account number (NOT email)
   @Prop({ required: false })
