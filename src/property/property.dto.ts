@@ -11,9 +11,9 @@ export class CreateAssetDto {
   @IsString()
   @IsNotEmpty()
   description: string;
-  
+
   @IsString()
- customCategory:string
+ customCategory:string;
 
   @IsEnum(AssetCategory)
   category: AssetCategory;
