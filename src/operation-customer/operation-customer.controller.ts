@@ -59,50 +59,50 @@ export class CustomerOperationsController {
     }
   }
 
-
 @Post('bookings/:bookingId/payment-proof')
-  @UseGuards(CustomerJwtAuthGuard)
-  @UseInterceptors(
-    FileInterceptor('paymentProof', {
-      storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-      fileFilter: (req, file, callback) => {
-        if (!file.mimetype.startsWith('image/')) {
-          return callback(
-            new BadRequestException('Only image files are allowed'),
-            false,
-          );
-        }
-        callback(null, true);
-      },
-    }),
-  )
-  async uploadPaymentProof(
-    @Req() req,
-    @Param('bookingId') bookingId: string,
-    @UploadedFile() file: Express.Multer.File,
-    @Query('lang') lang = 'en',
-  ) {
-    this.logger.log(`📤 Uploading payment proof for booking ${bookingId}`);
+@UseGuards(CustomerJwtAuthGuard)
+@UseInterceptors(
+  FileInterceptor('paymentProof', {
+    storage: memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (req, file, callback) => {
+      if (!file.mimetype.startsWith('image/')) {
+        return callback(
+          new BadRequestException('Only image files are allowed'),
+          false,
+        );
+      }
+      callback(null, true);
+    },
+  }),
+)
+async uploadPaymentProof(
+  @Req() req: { user: { sub: string } },
+  @Param('bookingId') bookingId: string,
+  @UploadedFile() file: Express.Multer.File,
+  @Query('lang') lang = 'en',
+): Promise<any> {
+  this.logger.log(`📤 Uploading payment proof for booking ${bookingId}`);
 
-    if (!Types.ObjectId.isValid(bookingId)) {
-      throw new BadRequestException('Invalid booking ID');
-    }
-
-    if (!file) {
-      throw new BadRequestException('Payment proof image is required');
-    }
-
-    const customerId = new Types.ObjectId(req.user.sub);
-
-    // ✅ Let service throw correct errors (DO NOT wrap)
-    return this.customerOpsService.uploadPaymentProof(
-      customerId,
-      new Types.ObjectId(bookingId),
-      file,
-      lang,
-    );
+  if (!Types.ObjectId.isValid(bookingId)) {
+    throw new BadRequestException('Invalid booking ID');
   }
+
+  if (!file) {
+    throw new BadRequestException('Payment proof image is required');
+  }
+
+  const customerId = new Types.ObjectId(req.user.sub);
+
+  // ✅ Let service handle business logic & errors
+  return this.customerOpsService.uploadPaymentProof(
+    customerId,
+    new Types.ObjectId(bookingId),
+    file,
+    lang,
+  );
+}
+
 // ===========================================================
 // 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL CUSTOMERS)
 // ===========================================================

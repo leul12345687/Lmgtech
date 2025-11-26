@@ -94,7 +94,7 @@ export class Booking {
   @Prop({ type: Date, required: false, default: null })
 expiresAt: Date | null;
   // merchant bank account number (NOT email)
-  @Prop({ required: false })
+  @Prop({ required: false,default: false })
   merchantAccountNumber?: string;
 
   // path for receipt upload (optional)
@@ -157,13 +157,13 @@ expiresAt: Date | null;
 // ============================
 
 
-@Prop({ required:false })
+@Prop({ required:false,default:null })
 netAmount: number; // merchant share
 
-@Prop({ required: false })
+@Prop({ required: false,default:null })
 vatAmount: number;
 
-@Prop({ required:false })
+@Prop({ required:false,default:null })
 vatRate: number;
 
 // ============================

@@ -7,6 +7,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import sharp from 'sharp';
 import * as Tesseract from 'tesseract.js';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -18,6 +19,12 @@ import { Booking, BookingDocument } from '../booking/booking.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service'; // ✅ Correct import
 
+interface ExtractedPaymentData {
+  isCBE: boolean;
+  accountNumber: string | null;
+  amount: number | null;
+  reference: string | null;
+}
 @Injectable()
 export class CustomerOperationsService {
   private readonly logger = new Logger(CustomerOperationsService.name);
@@ -27,8 +34,9 @@ export class CustomerOperationsService {
     @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly i18n: I18nService,
-    private readonly cloudinaryService: CloudinaryService, // ✅ Inject the global CloudinaryService directly
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
+
 
 // ===========================================================
 // 1️⃣ RETRIEVE PROPERTIES BY CATEGORY (AND MERGE BOOKING DATA)
@@ -216,151 +224,151 @@ async getPropertiesByCategory(category: string, lang?: string) {
     this.logger.error(`❌ Cloudinary upload failed (${folder}):`, err);
     throw new InternalServerErrorException('Image upload failed.');
   }
-}
+}// ===========================================================
+// 4️⃣ UPLOAD PAYMENT PROOF + AUTO VALIDATION (PRODUCTION READY)
 // ===========================================================
-// 4️⃣ UPLOAD PAYMENT PROOF + AUTO VALIDATION (FIXED & SAFE)
-// ===========================================================
+
 async uploadPaymentProof(
   customerId: Types.ObjectId,
   bookingId: Types.ObjectId,
   paymentProofFile: Express.Multer.File,
   lang?: string,
 ) {
+  // -------------------------------
+  // 1️⃣ Validate booking
+  // -------------------------------
+  const booking = await this.bookingModel.findById(bookingId);
+  if (!booking) {
+    throw new NotFoundException(
+      await this.i18n.translate(
+        'customer-operation.ERROR_BOOKING_NOT_FOUND',
+        { lang },
+      ),
+    );
+  }
+
+  if (!booking.customer.equals(customerId)) {
+    throw new ForbiddenException(
+      await this.i18n.translate(
+        'customer-operation.ERROR_NOT_OWNER',
+        { lang },
+      ),
+    );
+  }
+
+  if (!paymentProofFile?.buffer) {
+    throw new BadRequestException(
+      await this.i18n.translate(
+        'customer-operation.ERROR_NO_FILE_UPLOADED',
+        { lang },
+      ),
+    );
+  }
+
+  // -------------------------------
+  // 2️⃣ Upload to Cloudinary FIRST
+  // -------------------------------
+  const paymentProofUrl = await this.uploadToCloudinary(
+    paymentProofFile,
+    'payment-proofs',
+  );
+
+  // -------------------------------
+  // 3️⃣ OCR (SAFE – NEVER CRASH)
+  // -------------------------------
+  let rawText = '';
+  let extracted: ExtractedPaymentData = {
+    isCBE: false,
+    accountNumber: null,
+    amount: null,
+    reference: null,
+  };
+
   try {
-    // -------------------------------
-    // 1️⃣ Validate booking
-    // -------------------------------
-    const booking = await this.bookingModel.findById(bookingId);
-    if (!booking) {
-      throw new NotFoundException(
-        await this.i18n.translate(
-          'customer-operation.ERROR_BOOKING_NOT_FOUND',
-          { lang },
-        ),
-      );
-    }
+    // 🔑 Convert ANY image → PNG
+    const normalizedBuffer = await sharp(paymentProofFile.buffer)
+      .rotate() // fix phone rotation
+      .resize({ width: 1200 }) // OCR-friendly
+      .png()
+      .toBuffer();
 
-    if (!booking.customer.equals(customerId)) {
-      throw new ForbiddenException(
-        await this.i18n.translate(
-          'customer-operation.ERROR_NOT_OWNER',
-          { lang },
-        ),
-      );
-    }
-
-    if (!paymentProofFile?.buffer) {
-      throw new BadRequestException(
-        await this.i18n.translate(
-          'customer-operation.ERROR_NO_FILE_UPLOADED',
-          { lang },
-        ),
-      );
-    }
-
-    // -------------------------------
-    // 2️⃣ Upload image to Cloudinary
-    // -------------------------------
-    const paymentProofUrl = await this.uploadToCloudinary(
-      paymentProofFile,
-      'payment-proofs',
-    );
-
-    // -------------------------------
-    // 3️⃣ OCR (BUFFER BASED)
-    // -------------------------------
     const ocrResult = await Tesseract.recognize(
-      streamifier.createReadStream(paymentProofFile.buffer),
+      normalizedBuffer,
       'eng',
-      { logger: () => null }, // silence logs
+      { logger: () => null },
     );
 
-    const rawText = ocrResult.data.text.toUpperCase();
+    rawText = ocrResult.data.text.toUpperCase();
 
-    // -------------------------------
-    // 4️⃣ Extract payment data
-    // -------------------------------
-    const extracted = {
+    extracted = {
       isCBE: rawText.includes('COMMERCIAL BANK'),
       accountNumber: this.extractAccountNumber(rawText),
       amount: this.extractAmount(rawText),
       reference: this.extractReference(rawText),
     };
 
-    // -------------------------------
-    // 5️⃣ Auto-verification logic
-    // -------------------------------
-    const autoVerified =
-      extracted.isCBE &&
-      extracted.accountNumber === booking.merchantAccountNumber &&
-      extracted.reference === booking.externalPaymentRef &&
-      extracted.amount === booking.totalPrice;
-
-    // -------------------------------
-    // 6️⃣ Update booking
-    // -------------------------------
-    booking.paymentProofPath = paymentProofUrl;
-    booking.webhookPayload = extracted;
-    booking.rawWebhook = rawText;
-
-    if (autoVerified) {
-  booking.paymentStatus = PaymentStatus.PAID;
-  booking.status = BookingStatus.CONFIRMED;
-  booking.paymentApprovedAt = new Date();
-  booking.bookingConfirmedAt = new Date();
-} else {
-  booking.paymentStatus = PaymentStatus.PENDING_REVIEW;
-}
-
-    await booking.save();
-
-    // -------------------------------
-    // 7️⃣ Response
-    // -------------------------------
-    return {
-      statusCode: 200,
-      autoVerified,
-      paymentStatus: booking.paymentStatus,
-      extracted,
-      message: autoVerified
-        ? 'Payment automatically verified.'
-        : 'Payment uploaded and pending manual review.',
-      paymentProofUrl,
-    };
-  } catch (error) {
-    this.logger.error('❌ Payment proof upload failed', error);
-    throw new InternalServerErrorException(
-      await this.i18n.translate(
-        'customer-operation.ERROR_UPLOAD_FAILED',
-        { lang },
-      ),
-    );
+  } catch (err) {
+    // 🔥 DO NOT CRASH THE APP
+    this.logger.warn('⚠️ OCR failed – continuing without auto verification');
   }
-}
-// ===========================================================
-// 🔎 OCR HELPERS (CBE RECEIPTS)
-// ===========================================================
 
-private extractAccountNumber(text: string): string | null {
-  const match = text.match(
-    /(ACCOUNT\s*(NO|NUMBER)?|A\/C)\s*[:\-]?\s*(\d{10,16})/i,
-  );
-  return match ? match[3] : null;
-}
+  // -------------------------------
+  // 4️⃣ Auto verification
+  // -------------------------------
+  const autoVerified =
+    extracted.isCBE &&
+    extracted.accountNumber === booking.merchantAccountNumber &&
+    extracted.reference === booking.externalPaymentRef &&
+    extracted.amount === booking.totalPrice;
 
-private extractAmount(text: string): number | null {
-  const match = text.match(
-    /(AMOUNT|TOTAL|ETB|BIRR)\s*[:\-]?\s*([\d,]+(\.\d{1,2})?)/i,
-  );
-  return match ? Number(match[2].replace(/,/g, '')) : null;
-}
+  // -------------------------------
+  // 5️⃣ Update booking
+  // -------------------------------
+  booking.paymentProofPath = paymentProofUrl;
+  booking.rawWebhook = rawText;
+  booking.webhookPayload = extracted;
 
-private extractReference(text: string): string | null {
-  const match = text.match(
-    /(REF(ERENCE)?(\s*NO)?)\s*[:\-]?\s*([A-Z0-9\-]{6,30})/i,
-  );
-  return match ? match[4] : null;
+  if (autoVerified) {
+    booking.paymentStatus = PaymentStatus.PAID;
+    booking.status = BookingStatus.CONFIRMED;
+    booking.paymentApprovedAt = new Date();
+    booking.bookingConfirmedAt = new Date();
+  } else {
+    booking.paymentStatus = PaymentStatus.PENDING_REVIEW;
+  }
+
+  await booking.save();
+
+  // -------------------------------
+  // 6️⃣ Response
+  // -------------------------------
+  return {
+    statusCode: 200,
+    autoVerified,
+    paymentStatus: booking.paymentStatus,
+    extracted,
+    paymentProofUrl,
+    message: autoVerified
+      ? 'Payment automatically verified.'
+      : 'Payment uploaded and pending manual review.',
+  };
 }
+  // ================= OCR HELPERS =================
+  private extractAccountNumber(text: string): string | null {
+    const match = text.match(/(ACCOUNT\s*(NO|NUMBER)?|A\/C)\s*[:\-]?\s*(\d{10,16})/i);
+    return match ? match[3] : null;
+  }
+
+  private extractAmount(text: string): number | null {
+    const match = text.match(/(AMOUNT|TOTAL|ETB|BIRR)\s*[:\-]?\s*([\d,]+(\.\d{1,2})?)/i);
+    return match ? Number(match[2].replace(/,/g, '')) : null;
+  }
+
+  private extractReference(text: string): string | null {
+    const match = text.match(/(REF(ERENCE)?(\s*NO)?)\s*[:\-]?\s*([A-Z0-9\-]{6,30})/i);
+    return match ? match[4] : null;
+  }
+
 
 // ===========================================================
 // 3️⃣ GET ALL BOOKINGS (VISIBLE TO ALL LOGGED-IN CUSTOMERS)
