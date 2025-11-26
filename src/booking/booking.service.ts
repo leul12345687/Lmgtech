@@ -65,179 +65,258 @@ export class BookingService {
   // vatAmount = gross - netAmount
   // ===================================================
   public async createBookingForPayment(
-    customerId: Types.ObjectId,
-    assetName: string,
-    merchantEmail: string,
-    startDate: string | Date,
-    endDate: string | Date,
-    timeInterval: TimeInterval,
-    numberOfProperty: number,
-    securityDeposit = 0,
-    lang = 'en',
+  customerId: Types.ObjectId,
+  assetName: string,
+  merchantEmail: string,
+  startDate: string | Date,
+  endDate: string | Date,
+  timeInterval: TimeInterval,
+  numberOfProperty: number,
+  securityDeposit = 0,
+  lang = 'en',
+) {
+  /* ===============================
+     1️⃣ BASIC VALIDATION
+  =============================== */
+  if (
+    !customerId ||
+    !assetName ||
+    !merchantEmail ||
+    !startDate ||
+    !endDate ||
+    !timeInterval ||
+    !numberOfProperty ||
+    numberOfProperty <= 0
   ) {
-    // basic validation
-    if (
-      !customerId ||
-      !assetName ||
-      !merchantEmail ||
-      !startDate ||
-      !endDate ||
-      !timeInterval ||
-      !numberOfProperty
-    ) {
-      throw new BadRequestException('Missing required booking fields');
-    }
-
-    // --- merchant & customer
-    const merchant = await this.userModel.findOne({
-      email: merchantEmail,
-      role: UserRole.MERCHANT,
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
-
-    const customer = await this.userModel.findById(customerId);
-    if (!customer) throw new NotFoundException('Customer not found');
-
-    // merchant must have account number field per your User schema (acountnumber)
-    const merchantAccount = (merchant as any).acountnumber || (merchant as any).accountNumber || (merchant as any).bankAccount;
-    if (!merchantAccount) {
-      throw new BadRequestException('Merchant account number (acountnumber) is not set');
-    }
-
-    // --- asset lookup (scoped to merchant)
-    const assetModel = this.propertyService['assetModel'] as Model<AssetDocument>;
-    const asset = await assetModel.findOne({ name: assetName, merchant: merchant._id }).exec();
-    if (!asset) throw new NotFoundException('Asset not found');
-    if (asset.status !== AssetStatus.AVAILABLE) throw new BadRequestException('Asset unavailable');
-
-    // --- date conversion (client sends ET local times)
-    let startUTC: Date;
-    let endUTC: Date;
-    try {
-      startUTC = moment.tz(startDate as any, this.ET_TIMEZONE).utc().toDate();
-      endUTC = moment.tz(endDate as any, this.ET_TIMEZONE).utc().toDate();
-    } catch (e) {
-      throw new BadRequestException('Invalid date format');
-    }
-
-    // --- calculate duration units
-    const numberOfUnits = this.calculateDuration(startUTC, endUTC, timeInterval);
-
-    // --- determine price (take from asset)
-    const priceMap: Record<TimeInterval, number | undefined> = {
-      [TimeInterval.HOUR]: asset.rentalPriceperhour,
-      [TimeInterval.DAY]: asset.rentalPriceperday,
-      [TimeInterval.WEEK]: asset.rentalPriceperweek,
-      [TimeInterval.MONTH]: asset.rentalPricepermonth,
-      [TimeInterval.YEAR]: asset.rentalPriceperyear,
-    };
-    const pricePerUnit = priceMap[timeInterval];
-    if (pricePerUnit === undefined) throw new BadRequestException('Invalid time interval');
-
-    // total gross price (VAT included) that customer must pay
-    const totalPriceGross = Number((pricePerUnit * numberOfUnits * numberOfProperty).toFixed(2));
-
-    // VAT-included breakdown (Option 2)
-    const netAmount = Number((totalPriceGross / (1 + this.VAT_RATE)).toFixed(2)); // merchant receives
-    const vatAmount = Number((totalPriceGross - netAmount).toFixed(2)); // system owner share
-
-    // --- reference + expiry
-    const externalPaymentRef = this.generateReference();
-    const expiresAt = moment().add(this.PAYMENT_EXPIRE_HOURS, 'hours').toDate();
-
-    // --- transactional create to avoid races
-    const session = await this.bookingModel.db.startSession();
-    session.startTransaction();
-    try {
-      // re-check overlapping bookings
-      const overlapping = await this.bookingModel
-        .find({
-          asset: asset._id,
-          status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
-          $or: [{ startDate: { $lte: endUTC }, endDate: { $gte: startUTC } }],
-        })
-        .session(session);
-
-      const totalBooked = overlapping.reduce((sum, b) => sum + (b.numberOfProperty || 0), 0);
-      const availableUnits = (asset.numberOfProperty || 0) - totalBooked;
-      if (availableUnits < numberOfProperty) {
-        await session.abortTransaction();
-        throw new BadRequestException('Not enough units available for the selected period');
-      }
-
-      // create booking document (store gross price in totalPrice)
-      const createdArr = await this.bookingModel.create(
-        [
-          {
-            customer: customer._id,
-            merchant: merchant._id,
-            asset: asset._id,
-            startDate: startUTC,
-            endDate: endUTC,
-            timeInterval,
-            numberOfProperty,
-            numberOfUnits,
-            pricePerUnit,
-            totalPrice: totalPriceGross,
-            securityDeposit,
-            status: BookingStatus.PENDING,
-            paymentStatus: PaymentStatus.UNPAID,
-            externalPaymentRef,
-            expiresAt,
-            // VAT fields
-            vatRate: this.VAT_RATE,
-            vatAmount,
-            netAmount,
-            // merchant account field (store snapshot for convenience)
-            merchantAccountNumber: merchantAccount as any,
-            // snapshot immutable info
-            snapshot: {
-              merchantName: (merchant as any).businessName || merchant.fullName,
-              merchantEmail: merchant.email,
-              merchantPhone: merchant.phonenumber,
-              customerName: customer.fullName,
-              customerEmail: customer.email,
-              customerPhone: customer.phonenumber,
-              assetName: asset.name,
-            },
-            notifiedEmail: false,
-            notifiedSms: false,
-            confirmedNotified: false,
-            notifiedEnd: false,
-            remindedBeforeEnd: false,
-          },
-        ],
-        { session },
-      );
-
-      await session.commitTransaction();
-      session.endSession();
-
-      const booking = createdArr[0];
-      this.logger.log(`Created booking ${booking._id} with paymentRef ${externalPaymentRef}`);
-
-      // notify both parties that payment is required
-      await this.notifyBookingCreatedPaymentRequired(booking, customer as UserDocument, merchant as UserDocument, asset);
-
-      // return payment instructions to client
-      return {
-        paymentReference: externalPaymentRef,
-        totalPrice: totalPriceGross,
-        netAmount,
-        vatAmount,
-        vatRate: this.VAT_RATE,
-        accountNumber: merchantAccount,
-        expiresAt,
-        message:
-          'Booking created. Pay the gross amount (VAT included) to the account number using the reference before expiry.',
-      };
-    } catch (err) {
-      await session.abortTransaction();
-      session.endSession();
-      this.logger.error('createBookingForPayment failed', err.stack || err);
-      throw new InternalServerErrorException('Failed to create booking. Try again later.');
-    }
+    throw new BadRequestException('Missing or invalid booking fields');
   }
+
+  /* ===============================
+     2️⃣ LOAD USERS
+  =============================== */
+  const merchant = await this.userModel.findOne({
+    email: merchantEmail,
+    role: UserRole.MERCHANT,
+  });
+  if (!merchant) throw new NotFoundException('Merchant not found');
+
+  const customer = await this.userModel.findById(customerId);
+  if (!customer) throw new NotFoundException('Customer not found');
+
+  /* ===============================
+     3️⃣ MERCHANT ACCOUNT NUMBER (CBE)
+     🔴 SINGLE SOURCE OF TRUTH
+  =============================== */
+  if (!merchant.acountnumber) {
+    throw new BadRequestException(
+      'Merchant CBE account number is not configured',
+    );
+  }
+
+  const merchantAccountNumber = merchant.acountnumber.toString();
+
+  /* ===============================
+     4️⃣ LOAD ASSET
+  =============================== */
+  const assetModel =
+    this.propertyService['assetModel'] as Model<AssetDocument>;
+
+  const asset = await assetModel.findOne({
+    name: assetName,
+    merchant: merchant._id,
+  });
+
+  if (!asset) throw new NotFoundException('Asset not found');
+  if (asset.status !== AssetStatus.AVAILABLE) {
+    throw new BadRequestException('Asset is not available');
+  }
+
+  /* ===============================
+     5️⃣ DATE HANDLING (ET → UTC)
+  =============================== */
+  let startUTC: Date;
+  let endUTC: Date;
+
+  try {
+    startUTC = moment
+      .tz(startDate, this.ET_TIMEZONE)
+      .utc()
+      .toDate();
+
+    endUTC = moment
+      .tz(endDate, this.ET_TIMEZONE)
+      .utc()
+      .toDate();
+  } catch {
+    throw new BadRequestException('Invalid date format');
+  }
+
+  if (endUTC <= startUTC) {
+    throw new BadRequestException('End date must be after start date');
+  }
+
+  /* ===============================
+     6️⃣ DURATION & PRICE
+  =============================== */
+  const numberOfUnits = this.calculateDuration(
+    startUTC,
+    endUTC,
+    timeInterval,
+  );
+
+  if (numberOfUnits <= 0) {
+    throw new BadRequestException('Invalid booking duration');
+  }
+
+  const priceMap: Record<TimeInterval, number | undefined> = {
+    [TimeInterval.HOUR]: asset.rentalPriceperhour,
+    [TimeInterval.DAY]: asset.rentalPriceperday,
+    [TimeInterval.WEEK]: asset.rentalPriceperweek,
+    [TimeInterval.MONTH]: asset.rentalPricepermonth,
+    [TimeInterval.YEAR]: asset.rentalPriceperyear,
+  };
+
+  const pricePerUnit = priceMap[timeInterval];
+  if (!pricePerUnit || pricePerUnit <= 0) {
+    throw new BadRequestException(
+      'Price not configured for selected time interval',
+    );
+  }
+
+  /* ===============================
+     7️⃣ PRICE CALCULATION (VAT INCLUDED)
+  =============================== */
+  const totalPriceGross = Number(
+    (pricePerUnit * numberOfUnits * numberOfProperty).toFixed(2),
+  );
+
+  const netAmount = Number(
+    (totalPriceGross / (1 + this.VAT_RATE)).toFixed(2),
+  );
+
+  const vatAmount = Number(
+    (totalPriceGross - netAmount).toFixed(2),
+  );
+
+  /* ===============================
+     8️⃣ PAYMENT REFERENCE & EXPIRY
+  =============================== */
+  const externalPaymentRef = this.generateReference();
+  const expiresAt = moment()
+    .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
+    .toDate();
+
+  /* ===============================
+     9️⃣ TRANSACTION
+  =============================== */
+  const session = await this.bookingModel.db.startSession();
+  session.startTransaction();
+
+  try {
+    // Availability check
+    const overlapping = await this.bookingModel
+      .find({
+        asset: asset._id,
+        status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+        startDate: { $lte: endUTC },
+        endDate: { $gte: startUTC },
+      })
+      .session(session);
+
+    const alreadyBooked = overlapping.reduce(
+      (sum, b) => sum + (b.numberOfProperty || 0),
+      0,
+    );
+
+    const available =
+      (asset.numberOfProperty || 0) - alreadyBooked;
+
+    if (available < numberOfProperty) {
+      throw new BadRequestException(
+        'Not enough units available for selected dates',
+      );
+    }
+
+    const [booking] = await this.bookingModel.create(
+      [
+        {
+          customer: customer._id,
+          merchant: merchant._id,
+          asset: asset._id,
+          startDate: startUTC,
+          endDate: endUTC,
+          timeInterval,
+          numberOfProperty,
+          numberOfUnits,
+          pricePerUnit,
+          totalPrice: totalPriceGross,
+          securityDeposit,
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+          externalPaymentRef,
+          expiresAt,
+          vatRate: this.VAT_RATE,
+          vatAmount,
+          netAmount,
+          merchantAccountNumber,
+          snapshot: {
+            merchantName:
+              merchant.businessName || merchant.fullName,
+            merchantEmail: merchant.email,
+            merchantPhone: merchant.phonenumber,
+            customerName: customer.fullName,
+            customerEmail: customer.email,
+            customerPhone: customer.phonenumber,
+            assetName: asset.name,
+            merchantAccountNumber,
+          },
+        },
+      ],
+      { session },
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    await this.notifyBookingCreatedPaymentRequired(
+      booking,
+      customer,
+      merchant,
+      asset,
+    );
+
+    /* ===============================
+       🔟 RESPONSE TO CLIENT
+    =============================== */
+    return {
+      paymentReference: externalPaymentRef,
+      amount: totalPriceGross,
+      currency: 'ETB',
+      bank: 'Commercial Bank of Ethiopia',
+      accountNumber: merchantAccountNumber,
+      expiresAt,
+      vatAmount,
+      netAmount,
+      message:
+        'Booking created. Pay the gross amount (VAT included) to the account number using the reference before expiry.',
+    };
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    this.logger.error(
+      'createBookingForPayment failed',
+      error?.stack || error,
+    );
+
+    throw error instanceof BadRequestException
+      ? error
+      : new InternalServerErrorException(
+          'Failed to create booking',
+        );
+  }
+}
+
 
   // ===================================================
   // BANK WEBHOOK -> update payment status (idempotent)

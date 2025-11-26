@@ -145,6 +145,36 @@ expiresAt: Date | null;
 
   @Prop({ default: false })
   notifiedSms: boolean;
+   // ============================
+  // PAYMENT AMOUNTS
+  // ============================
+  @Prop({ required: true })
+  grossAmount: number;
+
+  @Prop({ default: 'ETB' })
+  currency: string;
+// ============================
+// PAYMENT AMOUNTS (REQUIRED)
+// ============================
+
+
+@Prop({ required: true })
+netAmount: number; // merchant share
+
+@Prop({ required: true })
+vatAmount: number;
+
+@Prop({ required: true })
+vatRate: number;
+
+// ============================
+// EXPIRY (FIX TYPE)
+// ============================
+
+  // ============================
+  // PAYMENT REF
+  // ============================
+  
 
   @Prop({ default: false })
   notificationSentAfterConfirm: boolean;
