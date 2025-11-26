@@ -1,3 +1,5 @@
+// src/booking/booking.schema.ts
+
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import { Asset } from '../property/property.schema';
@@ -5,10 +7,15 @@ import { User } from '../schema/user.schema';
 
 export enum BookingStatus {
   PENDING = 'PENDING',
-  ACCEPTED = 'ACCEPTED',
-  DECLINED = 'DECLINED',
   CONFIRMED = 'CONFIRMED',
   CANCELLED = 'CANCELLED',
+}
+
+export enum PaymentStatus {
+  UNPAID = 'UNPAID',
+  PENDING = 'PENDING',
+  PAID = 'PAID',
+  EXPIRED = 'EXPIRED'
 }
 
 export enum TimeInterval {
@@ -23,71 +30,87 @@ export type BookingDocument = Booking & Document;
 
 @Schema({ timestamps: true, collection: 'bookings' })
 export class Booking {
-  // Customer who made the booking
+  // ============================
+  // CUSTOMER + MERCHANT
+  // ============================
   @Prop({ type: Types.ObjectId, ref: User.name, required: true })
   customer: Types.ObjectId;
 
-  // Merchant who owns the asset
   @Prop({ type: Types.ObjectId, ref: User.name, required: true })
   merchant: Types.ObjectId;
 
-  // The booked asset
+  // Asset
   @Prop({ type: Types.ObjectId, ref: Asset.name, required: true })
   asset: Types.ObjectId;
 
-  // Rental start date
+
+  // RENTAL PERIOD
+  // ============================
   @Prop({ required: true })
   startDate: Date;
 
-  // Rental end date
   @Prop({ required: true })
   endDate: Date;
 
-  // Rental interval
   @Prop({ enum: TimeInterval, required: true })
   timeInterval: TimeInterval;
 
-  @Prop({ required: true, min: 1 })
+  @Prop({ required: true })
   numberOfProperty: number;
 
-  @Prop({ required: false })
+  @Prop()
   numberOfUnits?: number;
 
-  @Prop({ required: false })
+  // ============================
+  // PRICING
+  // ============================
+  @Prop()
+  pricePerUnit?: number;
+
+  @Prop()
   totalPrice?: number;
+
+  // System fee/VAT for platform owner
+  @Prop({ default: 0 })
+  systemVatFee: number;
 
   @Prop({ default: 0 })
   securityDeposit: number;
 
-  @Prop({ enum: BookingStatus, default: BookingStatus.PENDING })
+  // ============================
+  // PAYMENT PROCESSING
+  // ============================
+  @Prop({ default: BookingStatus.PENDING })
   status: BookingStatus;
 
+  @Prop({ enum: PaymentStatus, default: PaymentStatus.UNPAID })
+  paymentStatus: PaymentStatus;
+// Mongoose will automatically add _id, but for clarity:
+    _id: Types.ObjectId;
+  // unique reference for bank
   @Prop({ default: null })
   externalPaymentRef?: string;
 
-  // LOCAL OR CLOUDINARY PATH
+  @Prop({ default: null })
+expiresAt: Date | null;
+  // merchant bank account number (NOT email)
   @Prop({ required: false })
+  merchantAccountNumber?: string;
+
+  // path for receipt upload (optional)
+  @Prop()
   paymentProofPath?: string;
 
-  // =============================
-  // 🔔 REAL-TIME NOTIFICATION FLAGS
-  // =============================
+  // after bank webhook
+  @Prop()
+  transactionId?: string;
 
-  // End-of-rent email sent?
-  @Prop({ type: Boolean, default: false })
-  notifiedEmail: boolean;
+  @Prop({ type: Object, default: null })
+  webhookPayload?: any;
 
-  // End-of-rent SMS sent?
-  @Prop({ type: Boolean, default: false })
-  notifiedSms: boolean;
+  @Prop({ type: Object, default: null })
+  rawWebhook?: any;
 
-  // Booking confirmation (ACCEPTED/CONFIRMED) notification sent?
-  @Prop({ type: Boolean, default: false })
-  confirmedNotified: boolean;
-
-  // =============================
-  // 📅 TIMESTAMP TRACKING
-  // =============================
   @Prop({ default: null })
   paymentApprovedAt?: Date;
 
@@ -96,6 +119,37 @@ export class Booking {
 
   @Prop({ default: null })
   cancelledAt?: Date;
+
+  // ============================
+  // SNAPSHOT — IMMUTABLE INFO
+  // ============================
+  @Prop({
+    type: {
+      merchantName: String,
+      merchantEmail: String,
+      merchantPhone: String,
+      customerName: String,
+      customerEmail: String,
+      customerPhone: String,
+      assetName: String,
+    },
+    default: {},
+  })
+  snapshot: Record<string, any>;
+
+  // ============================
+  // NOTIFICATION FLAGS
+  // ============================
+  @Prop({ default: false })
+  notifiedEmail: boolean;
+
+  @Prop({ default: false })
+  notifiedSms: boolean;
+
+  @Prop({ default: false })
+  notificationSentAfterConfirm: boolean;
+  @Prop({ default: false })
+  confirmedNotified: boolean;
 
   @Prop({ type: [String], default: [] })
   notificationHistory: string[];

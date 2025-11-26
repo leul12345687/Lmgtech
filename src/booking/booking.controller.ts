@@ -6,6 +6,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { TimeInterval } from './booking.schema';
@@ -17,68 +18,82 @@ export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
 
   // ===================================================
-  // ✅ Create Booking (Customer Only)
+  //  ✅ Create Booking (Customer Only)
   // ===================================================
   @UseGuards(CustomerJwtAuthGuard)
   @Post('create')
   @HttpCode(HttpStatus.CREATED)
   async createBooking(@Req() req, @Body() body) {
-    try {
-      const {
-        assetName,
-        merchantEmail,
-        startDate,
-        endDate,
-        timeInterval,
-        numberOfProperty,
-        securityDeposit,
-        lang,
-      } = body;
+    const {
+      assetName,
+      merchantEmail,
+      startDate,
+      endDate,
+      timeInterval,
+      numberOfProperty,
+      securityDeposit,
+      lang,
+    } = body;
 
-      // Validate essential fields
-      if (
-        !assetName ||
-        !merchantEmail ||
-        !startDate ||
-        !endDate ||
-        !timeInterval ||
-        !numberOfProperty
-      ) {
-        return {
-          statusCode: 400,
-          message: 'Missing required booking fields',
-        };
-      }
-
-      // Extract customer ID from JWT payload
-      const customerId = req.user?.sub;
-      if (!customerId)
-        return {
-          statusCode: 401,
-          message: 'Unauthorized: missing valid customer token',
-        };
-
-      // Call service
-      const bookingResult = await this.bookingService.createBooking(
-        new Types.ObjectId(customerId),
-        assetName,
-        merchantEmail,
-        new Date(startDate),
-        new Date(endDate),
-        timeInterval as TimeInterval,
-        Number(numberOfProperty),
-        securityDeposit ? Number(securityDeposit) : 0,
-        lang || 'en',
-      );
-
-      return {
-        statusCode: 201,
-        message: bookingResult.message,
-        bookingSummary: bookingResult.bookingSummary,
-      };
-    } catch (error) {
-      console.error('❌ Booking creation error:', error);
-      throw error;
+    // -------------------------------
+    // 1) Validate required fields
+    // -------------------------------
+    if (
+      !assetName ||
+      !merchantEmail ||
+      !startDate ||
+      !endDate ||
+      !timeInterval ||
+      !numberOfProperty
+    ) {
+      throw new BadRequestException('Missing required booking fields.');
     }
+
+    // Validate enum
+    if (!Object.values(TimeInterval).includes(timeInterval)) {
+      throw new BadRequestException(`Invalid time interval: ${timeInterval}`);
+    }
+
+    // Parse dates
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new BadRequestException('Invalid date format.');
+    }
+
+    // -------------------------------
+    // 2) Validate JWT → customer ID
+    // -------------------------------
+    const customerId = req.user?.sub;
+    if (!customerId) {
+      return {
+        statusCode: 401,
+        message: 'Unauthorized: missing valid customer token',
+      };
+    }
+
+    // -------------------------------
+    // 3) Create booking via service
+    // -------------------------------
+    const bookingResult = await this.bookingService.createBookingForPayment(
+      new Types.ObjectId(customerId),
+      assetName,
+      merchantEmail,
+      start,
+      end,
+      timeInterval as TimeInterval,
+      Number(numberOfProperty),
+      securityDeposit ? Number(securityDeposit) : 0,
+      lang || 'en',
+    );
+
+    // -------------------------------
+    // 4) Unified response
+    // -------------------------------
+    return {
+      statusCode: 201,
+      message: bookingResult.message,
+    };
   }
 }

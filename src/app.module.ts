@@ -17,6 +17,9 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SmsModule } from './notifications/sms.module';
 import { ProfileModule  } from './gettingandupdatingprofile/gettingandupdatingprofile.module';
+import { BankingService } from './banking/banking.service';
+import { BankingController } from './banking/banking.controller';
+import { BankingModule } from './banking/banking.module';
 
 import * as path from 'path';
 
@@ -72,9 +75,10 @@ import * as path from 'path';
     NotificationsModule,
     SmsModule,
     ScheduleModule.forRoot(),
-    ProfileModule ,   // ✅ VERY IMPORTANT
+    ProfileModule,
+    BankingModule ,   // ✅ VERY IMPORTANT
   ],
-  controllers: [AppController, ],
-  providers: [AppService, ],
+  controllers: [AppController, BankingController, ],
+  providers: [AppService, BankingService, ],
 })
 export class AppModule {}

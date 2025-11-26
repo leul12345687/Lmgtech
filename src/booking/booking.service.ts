@@ -5,20 +5,22 @@ import {
   NotFoundException,
   InternalServerErrorException,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { I18nService } from 'nestjs-i18n';
-import { Cron } from '@nestjs/schedule';
 import moment from 'moment-timezone';
+import { randomUUID } from 'crypto';
+import { Cron } from '@nestjs/schedule';
 import {
   Booking,
   BookingDocument,
   BookingStatus,
+  PaymentStatus,
   TimeInterval,
 } from './booking.schema';
 import { PropertyService } from '../property/property.service';
-import { AssetDocument, AssetStatus } from '../property/property.schema';
+import { AssetDocument, AssetStatus,Asset } from '../property/property.schema';
 import {
   differenceInHours,
   differenceInDays,
@@ -29,28 +31,40 @@ import {
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { MailService } from '../notifications/mail.service';
 import { SmsService } from '../notifications/sms.service';
-
+export type BookingWithUsers = Booking & {
+  customer: UserDocument;
+  merchant: UserDocument;
+};
+// 👇 ADD THIS
+export type BookingWithUsersAndAsset = Booking & {
+  customer: User;
+  asset: Asset;
+};
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
   private readonly ET_TIMEZONE = 'Africa/Addis_Ababa';
 
+  // config — adjust as needed
+  private readonly PAYMENT_EXPIRE_HOURS = 24; // X hours to expire unpaid ref
+  private readonly VAT_RATE = 0.15; // 15% VAT (VAT-included pricing model)
+  private readonly AMOUNT_TOLERANCE = 0.5; // ETB tolerance for webhook amount comparison
+
   constructor(
     @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly propertyService: PropertyService,
-    private readonly i18n: I18nService,
     private readonly mailService: MailService,
     private readonly smsService: SmsService,
   ) {}
 
   // ===================================================
-  // CREATE BOOKING
-  // Converts submitted dates from Ethiopia TZ → UTC (store UTC)
-  // Notifies customer + merchant after creation
-  // Returns booking summary with ET-formatted dates
+  // CREATE BOOKING -> generate payment ref -> return info
+  // VAT included: totalPriceGross is what customer pays (stored in totalPrice)
+  // netAmount = gross / (1 + VAT_RATE)
+  // vatAmount = gross - netAmount
   // ===================================================
-  async createBooking(
+  public async createBookingForPayment(
     customerId: Types.ObjectId,
     assetName: string,
     merchantEmail: string,
@@ -58,44 +72,58 @@ export class BookingService {
     endDate: string | Date,
     timeInterval: TimeInterval,
     numberOfProperty: number,
-    securityDeposit: number,
+    securityDeposit = 0,
     lang = 'en',
   ) {
-    this.logger.log('📦 [BookingService] createBooking() called');
-
     // basic validation
-    if (!customerId || !assetName || !merchantEmail || !startDate || !endDate || !timeInterval || !numberOfProperty) {
-      throw new BadRequestException(await this.i18n.translate('booking.ERROR_MISSING_FIELDS', { lang }));
+    if (
+      !customerId ||
+      !assetName ||
+      !merchantEmail ||
+      !startDate ||
+      !endDate ||
+      !timeInterval ||
+      !numberOfProperty
+    ) {
+      throw new BadRequestException('Missing required booking fields');
     }
 
-    // find merchant & customer
-    const merchant = await this.userModel.findOne({ email: merchantEmail, role: UserRole.MERCHANT });
-    if (!merchant) throw new NotFoundException(await this.i18n.translate('booking.ERROR_MERCHANT_NOT_FOUND', { lang }));
+    // --- merchant & customer
+    const merchant = await this.userModel.findOne({
+      email: merchantEmail,
+      role: UserRole.MERCHANT,
+    });
+    if (!merchant) throw new NotFoundException('Merchant not found');
 
     const customer = await this.userModel.findById(customerId);
-    if (!customer) throw new NotFoundException(await this.i18n.translate('booking.ERROR_CUSTOMER_NOT_FOUND', { lang }));
+    if (!customer) throw new NotFoundException('Customer not found');
 
-    // find asset (through PropertyService's assetModel)
+    // merchant must have account number field per your User schema (acountnumber)
+    const merchantAccount = (merchant as any).acountnumber || (merchant as any).accountNumber || (merchant as any).bankAccount;
+    if (!merchantAccount) {
+      throw new BadRequestException('Merchant account number (acountnumber) is not set');
+    }
+
+    // --- asset lookup (scoped to merchant)
     const assetModel = this.propertyService['assetModel'] as Model<AssetDocument>;
     const asset = await assetModel.findOne({ name: assetName, merchant: merchant._id }).exec();
-    if (!asset) throw new NotFoundException(await this.i18n.translate('booking.ERROR_ASSET_NOT_FOUND', { lang }));
-    if (asset.status !== AssetStatus.AVAILABLE) throw new BadRequestException(await this.i18n.translate('booking.ERROR_ASSET_UNAVAILABLE', { lang }));
+    if (!asset) throw new NotFoundException('Asset not found');
+    if (asset.status !== AssetStatus.AVAILABLE) throw new BadRequestException('Asset unavailable');
 
-    // Convert start/end dates from Ethiopia timezone into UTC Date objects
-    // Input is assumed to be the local ET time selected by user
+    // --- date conversion (client sends ET local times)
     let startUTC: Date;
     let endUTC: Date;
     try {
       startUTC = moment.tz(startDate as any, this.ET_TIMEZONE).utc().toDate();
       endUTC = moment.tz(endDate as any, this.ET_TIMEZONE).utc().toDate();
     } catch (e) {
-      throw new BadRequestException(await this.i18n.translate('booking.ERROR_INVALID_DATE', { lang }));
+      throw new BadRequestException('Invalid date format');
     }
 
-    // Calculate number of units (duration)
-    const numberOfUnits = this.calculateDuration(startUTC, endUTC, timeInterval, lang);
+    // --- calculate duration units
+    const numberOfUnits = this.calculateDuration(startUTC, endUTC, timeInterval);
 
-    // price lookup
+    // --- determine price (take from asset)
     const priceMap: Record<TimeInterval, number | undefined> = {
       [TimeInterval.HOUR]: asset.rentalPriceperhour,
       [TimeInterval.DAY]: asset.rentalPriceperday,
@@ -104,29 +132,40 @@ export class BookingService {
       [TimeInterval.YEAR]: asset.rentalPriceperyear,
     };
     const pricePerUnit = priceMap[timeInterval];
-    if (!pricePerUnit) throw new BadRequestException(await this.i18n.translate('booking.ERROR_INVALID_INTERVAL', { lang }));
-    const totalPrice = pricePerUnit * numberOfUnits * numberOfProperty;
+    if (pricePerUnit === undefined) throw new BadRequestException('Invalid time interval');
 
-    // Use a transaction to avoid race conditions when checking available units
+    // total gross price (VAT included) that customer must pay
+    const totalPriceGross = Number((pricePerUnit * numberOfUnits * numberOfProperty).toFixed(2));
+
+    // VAT-included breakdown (Option 2)
+    const netAmount = Number((totalPriceGross / (1 + this.VAT_RATE)).toFixed(2)); // merchant receives
+    const vatAmount = Number((totalPriceGross - netAmount).toFixed(2)); // system owner share
+
+    // --- reference + expiry
+    const externalPaymentRef = this.generateReference();
+    const expiresAt = moment().add(this.PAYMENT_EXPIRE_HOURS, 'hours').toDate();
+
+    // --- transactional create to avoid races
     const session = await this.bookingModel.db.startSession();
     session.startTransaction();
     try {
-      // re-check overlapping bookings (within transaction)
-      const overlapping = await this.bookingModel.find({
-        asset: asset._id,
-        status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
-        $or: [{ startDate: { $lte: endUTC }, endDate: { $gte: startUTC } }],
-      }).session(session);
+      // re-check overlapping bookings
+      const overlapping = await this.bookingModel
+        .find({
+          asset: asset._id,
+          status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+          $or: [{ startDate: { $lte: endUTC }, endDate: { $gte: startUTC } }],
+        })
+        .session(session);
 
       const totalBooked = overlapping.reduce((sum, b) => sum + (b.numberOfProperty || 0), 0);
       const availableUnits = (asset.numberOfProperty || 0) - totalBooked;
-
       if (availableUnits < numberOfProperty) {
         await session.abortTransaction();
-        throw new BadRequestException(await this.i18n.translate('booking.ERROR_NOT_ENOUGH_STOCK', { lang }));
+        throw new BadRequestException('Not enough units available for the selected period');
       }
 
-      // create booking document (stored in UTC)
+      // create booking document (store gross price in totalPrice)
       const createdArr = await this.bookingModel.create(
         [
           {
@@ -138,12 +177,34 @@ export class BookingService {
             timeInterval,
             numberOfProperty,
             numberOfUnits,
-            totalPrice,
+            pricePerUnit,
+            totalPrice: totalPriceGross,
             securityDeposit,
             status: BookingStatus.PENDING,
+            paymentStatus: PaymentStatus.UNPAID,
+            externalPaymentRef,
+            expiresAt,
+            // VAT fields
+            vatRate: this.VAT_RATE,
+            vatAmount,
+            netAmount,
+            // merchant account field (store snapshot for convenience)
+            merchantAccountNumber: merchantAccount as any,
+            // snapshot immutable info
+            snapshot: {
+              merchantName: (merchant as any).businessName || merchant.fullName,
+              merchantEmail: merchant.email,
+              merchantPhone: merchant.phonenumber,
+              customerName: customer.fullName,
+              customerEmail: customer.email,
+              customerPhone: customer.phonenumber,
+              assetName: asset.name,
+            },
             notifiedEmail: false,
             notifiedSms: false,
             confirmedNotified: false,
+            notifiedEnd: false,
+            remindedBeforeEnd: false,
           },
         ],
         { session },
@@ -152,30 +213,379 @@ export class BookingService {
       await session.commitTransaction();
       session.endSession();
 
-      const created = createdArr[0];
-      this.logger.log(`✅ Booking created successfully with ID: ${created._id}`);
+      const booking = createdArr[0];
+      this.logger.log(`Created booking ${booking._id} with paymentRef ${externalPaymentRef}`);
 
-      // Notify both merchant & customer (email + sms) with asset name, rental range, customer name
-      await this.notifyBookingCreatedToBoth(created, customer, merchant, asset, lang);
+      // notify both parties that payment is required
+      await this.notifyBookingCreatedPaymentRequired(booking, customer as UserDocument, merchant as UserDocument, asset);
 
-      // Return booking summary with ET-formatted dates
-      const summary = await this.buildBookingSummary(created, customer, merchant, asset, availableUnits - numberOfProperty, pricePerUnit, lang);
-      return summary;
+      // return payment instructions to client
+      return {
+        paymentReference: externalPaymentRef,
+        totalPrice: totalPriceGross,
+        netAmount,
+        vatAmount,
+        vatRate: this.VAT_RATE,
+        accountNumber: merchantAccount,
+        expiresAt,
+        message:
+          'Booking created. Pay the gross amount (VAT included) to the account number using the reference before expiry.',
+      };
     } catch (err) {
       await session.abortTransaction();
       session.endSession();
-      this.logger.error('Create booking failed', err.stack || err);
-      if (err instanceof BadRequestException || err instanceof NotFoundException) throw err;
-      throw new InternalServerErrorException(await this.i18n.translate('booking.ERROR_CREATE_BOOKING', { lang }));
+      this.logger.error('createBookingForPayment failed', err.stack || err);
+      throw new InternalServerErrorException('Failed to create booking. Try again later.');
     }
   }
 
-  
+  // ===================================================
+  // BANK WEBHOOK -> update payment status (idempotent)
+  // Expect payload shape { reference, amount, transactionId, status, paidAt, payerPhone }
+ public async handleBankWebhook(payload: any) {
+  const { reference, amount, transactionId, status, paidAt } = payload || {};
+  if (!reference) throw new BadRequestException('Missing payment reference in webhook');
+
+  const booking = await this.bookingModel
+    .findOne({ externalPaymentRef: reference })
+    .populate('merchant customer asset');
+  if (!booking) {
+    this.logger.warn(`Unknown webhook reference: ${reference}`);
+    throw new NotFoundException('Reference not found');
+  }
+
+  // idempotent: if already PAID, ignore (or update if different tx)
+  if (booking.paymentStatus === PaymentStatus.PAID) {
+    this.logger.log(`Webhook for already-paid booking ${booking._id} ignored`);
+    return { ok: true };
+  }
+
+  // amount validation (tolerance)
+  const receivedAmount = Number(amount);
+  const expected = Number(booking.totalPrice);
+  if (Math.abs(receivedAmount - expected) > this.AMOUNT_TOLERANCE) {
+    this.logger.warn(`Amount mismatch for ${reference}: expected ${expected} got ${receivedAmount}`);
+    booking.rawWebhook = payload;
+    await booking.save();
+    throw new BadRequestException('Amount mismatch — manual review required');
+  }
+
+  // mark payment paid, record transaction
+  booking.paymentStatus = PaymentStatus.PAID;
+  booking.paymentApprovedAt = paidAt ? new Date(paidAt) : new Date();
+  booking.transactionId = transactionId || booking.transactionId;
+  booking.webhookPayload = payload;
+
+  // ✅ clear expiry safely
+  booking.expiresAt = null;
+
+  // ✅ use booking's own dates
+  const startUTC = moment.tz(booking.startDate, this.ET_TIMEZONE).utc().toDate();
+  const endUTC = moment.tz(booking.endDate, this.ET_TIMEZONE).utc().toDate();
+
+  // optional: if you want to set an expiry for some reason
+   booking.expiresAt = startUTC; // e.g., start date as the new expiry
+
+  await booking.save();
+
+  // notify merchant that payment is received
+  await this.notifyMerchantPaymentReceived(booking);
+
+  this.logger.log(`Payment recorded for booking ${booking._id} (ref ${reference})`);
+  return { ok: true };
+}
+
 
   // ===================================================
-  // Helper: Duration Calculator (keeps original logic)
+  // Merchant confirms booking after verifying payment
+  // Only merchant who owns the booking can confirm
   // ===================================================
-  private calculateDuration(startDate: Date, endDate: Date, timeInterval: TimeInterval, lang: string): number {
+  public async merchantConfirmBooking(bookingId: string | Types.ObjectId, merchantId: string | Types.ObjectId) {
+    const booking = await this.bookingModel.findById(bookingId).populate('merchant customer asset');
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    if (booking.merchant.toString() !== new Types.ObjectId(merchantId).toString()) {
+      throw new ForbiddenException('Not allowed to confirm this booking');
+    }
+
+    if (booking.paymentStatus !== PaymentStatus.PAID) {
+      throw new BadRequestException('Cannot confirm booking: payment not received');
+    }
+
+    if (booking.status === BookingStatus.CONFIRMED) {
+      return { message: 'Booking already confirmed' };
+    }
+
+    booking.status = BookingStatus.CONFIRMED;
+    booking.bookingConfirmedAt = new Date();
+    await booking.save();
+
+    // notify customer
+    await this.notifyCustomerBookingConfirmed(booking as BookingDocument);
+
+    this.logger.log(`Merchant ${merchantId} confirmed booking ${booking._id}`);
+    return { message: 'Booking confirmed' };
+  }
+
+  // ===================================================
+  // AUTO-EXPIRE & HARD DELETE UNPAID BOOKINGS
+  // Runs every 15 minutes
+  // - Notify both customer & merchant
+  // - Hard delete booking to free inventory
+  // ===================================================
+ @Cron('*/15 * * * *') // every 15 minutes
+private async expireUnpaidBookings() {
+  this.logger.log('⏳ Checking expired unpaid bookings...');
+
+  const now = new Date();
+
+  const expired = await this.bookingModel
+    .find({
+      paymentStatus: PaymentStatus.UNPAID,
+      expiresAt: { $lte: now },
+    })
+    .populate('customer')
+    .populate('merchant')
+    .lean<BookingWithUsers[]>()
+    .exec();
+
+  if (!expired.length) {
+    this.logger.log('✔ No expired unpaid bookings found.');
+    return;
+  }
+
+  for (const booking of expired) {
+    try {
+      const customer = booking.customer;
+      const merchant = booking.merchant;
+      const assetName = booking.snapshot?.assetName || 'asset';
+
+      this.logger.warn(`❌ Expiring unpaid booking REF=${booking.externalPaymentRef}`);
+
+      // ===========================================================
+      // 1) UPDATE BOOKING STATUS
+      // ===========================================================
+      await this.bookingModel.updateOne(
+        { _id: booking._id },
+        {
+          $set: {
+            status: BookingStatus.CANCELLED,
+            paymentStatus: PaymentStatus.EXPIRED,
+            cancelledAt: now,
+            externalPaymentRef: undefined,
+          },
+          $push: {
+            notificationHistory: `Booking expired at ${now.toISOString()}`,
+          },
+        },
+      );
+
+      // ===========================================================
+      // 2) NOTIFY CUSTOMER (SMS + EMAIL)
+      // ===========================================================
+
+      const customerMsg = `Your booking for ${assetName} has expired due to non-payment.`;
+
+      // SMS
+      if (customer?.phonenumber) {
+        await this.smsService.sendSms(
+          customer.phonenumber.toString(),
+          customerMsg,
+        ).catch(err => {
+          this.logger.warn(`⚠ Failed to send customer SMS: ${err?.message}`);
+        });
+      }
+
+      // Email
+      if (customer?.email) {
+        await this.mailService.sendMail(
+          customer.email,
+          'Booking Expired — Payment Not Received',
+          `<p>${customerMsg}</p>`
+        ).catch(err => {
+          this.logger.warn(`⚠ Failed to send customer email: ${err?.message}`);
+        });
+      }
+
+      // ===========================================================
+      // 3) NOTIFY MERCHANT (SMS + EMAIL)
+      // ===========================================================
+
+      const merchantMsg = `Booking REF: ${booking.externalPaymentRef || 'N/A'} for ${assetName} expired due to no payment from customer.`;
+
+      // SMS
+      if (merchant?.phonenumber) {
+        await this.smsService.sendSms(
+          merchant.phonenumber.toString(),
+          merchantMsg
+        ).catch(err => {
+          this.logger.warn(`⚠ Failed to send merchant SMS: ${err?.message}`);
+        });
+      }
+
+      // Email
+      if (merchant?.email) {
+        await this.mailService.sendMail(
+          merchant.email,
+          'Booking Expired — Customer Did Not Pay',
+          `<p>${merchantMsg}</p>`
+        ).catch(err => {
+          this.logger.warn(`⚠ Failed to send merchant email: ${err?.message}`);
+        });
+      }
+
+      this.logger.log(`✔ Notifications sent for expired booking ${booking._id}`);
+
+    } catch (err) {
+      this.logger.error(
+        `🔥 Error processing expired booking ${booking._id}: ${err?.message}`
+      );
+    }
+  }
+}
+
+@Cron('*/5 * * * *') // every 5 minutes
+async notifyConfirmedBookings() {
+  const confirmed = await this.bookingModel.find({
+    status: BookingStatus.CONFIRMED,
+    notificationSentAfterConfirm: { $ne: true }
+  });
+
+  for (const b of confirmed) {
+    try {
+      // send notifications
+      await this.notifyCustomerBookingConfirmed(b);
+      await this.notifyMerchantBookingConfirmed(b);
+
+      // update flag
+      await this.bookingModel.updateOne(
+        { _id: b._id },
+        { notificationSentAfterConfirm: true }
+      );
+
+      this.logger.log(`Notification sent for confirmed booking ${b._id}`);
+    } catch (err) {
+      this.logger.warn(
+        `Failed sending confirm notifications for ${b._id}: ${err?.message}`
+      );
+    }
+  }
+}
+private async notifyMerchantBookingConfirmed(booking: BookingDocument) {
+  const merchant = await this.userModel.findById(booking.merchant);
+  if (!merchant) return;
+
+  const msg = `Booking ${booking._id} has been confirmed by the merchant.`;
+
+  if (merchant.phonenumber) {
+    await this.smsService.sendSms(merchant.phonenumber.toString(), msg)
+      .catch(() => {});
+  }
+
+  if (merchant.email) {
+    await this.mailService.sendMail(
+      merchant.email,
+      'Booking Confirmed',
+      `<p>${msg}</p>`
+    ).catch(() => {});
+  }
+}
+
+
+  // ===================================================
+  // NOTIFY END-DATE EVENTS
+  // - 1 hour reminder (once)
+  // - Final end notification when endDate <= now (once)
+  // Runs every 5 minutes to be precise
+  // ===================================================
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+ @Cron('*/5 * * * *')
+private async notifyEndDateEvents() {
+  const nowUtc = moment().utc().toDate();
+  const oneHourLater = moment(nowUtc).add(1, 'hour').toDate();
+
+  // =============================
+  // 1) REMINDERS BEFORE END TIME
+  // =============================
+  const reminders = await this.bookingModel
+    .find({
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      endDate: { $lte: oneHourLater, $gt: nowUtc },
+      remindedBeforeEnd: { $ne: true },
+    })
+    .populate('customer')
+    .populate('asset')
+    .lean<BookingWithUsersAndAsset[]>();  // ✅ fixed
+
+  for (const b of reminders) {
+    try {
+      const cust = b.customer;
+      const assetName = b.asset?.name || 'asset';
+
+      const msg = `Reminder: your rental for ${assetName} ends at ${moment(b.endDate)
+        .tz(this.ET_TIMEZONE)
+        .format('YYYY-MM-DD HH:mm')}.`;
+
+      // ✅ Convert phonenumber to string
+      if (cust?.phonenumber)
+        await this.smsService.sendSms(cust.phonenumber.toString(), msg);
+
+      if (cust?.email)
+        await this.mailService.sendMail(cust.email, 'Rental ending soon', `<p>${msg}</p>`);
+
+      await this.bookingModel.updateOne(
+        { _id: b._id },
+        { remindedBeforeEnd: true }
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to send reminder for booking ${b._id}: ${err?.message}`);
+    }
+  }
+
+  // =============================
+  // 2) FINAL NOTIFICATION
+  // =============================
+  const ended = await this.bookingModel
+    .find({
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      endDate: { $lte: nowUtc },
+      notifiedEnd: { $ne: true },
+    })
+    .populate('customer')
+    .populate('asset')
+    .lean<BookingWithUsersAndAsset[]>();  // ✅ fixed
+
+  for (const b of ended) {
+    try {
+      const cust = b.customer;
+      const assetName = b.asset?.name || 'asset';
+
+      const msg = `Your rental for ${assetName} has ended. Thank you.`;
+
+      // ✅ Convert phonenumber to string
+      if (cust?.phonenumber)
+        await this.smsService.sendSms(cust.phonenumber.toString(), msg);
+
+      if (cust?.email)
+        await this.mailService.sendMail(cust.email, 'Rental ended', `<p>${msg}</p>`);
+
+      await this.bookingModel.updateOne(
+        { _id: b._id },
+        { notifiedEnd: true }
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to send end notification for booking ${b._id}: ${err?.message}`);
+    }
+  }
+}
+
+
+  // ===================================================
+  // HELPERS & NOTIFICATION UTILITIES
+  // ===================================================
+  private calculateDuration(startDate: Date, endDate: Date, timeInterval: TimeInterval): number {
     switch (timeInterval) {
       case TimeInterval.HOUR:
         return Math.max(1, differenceInHours(endDate, startDate));
@@ -188,176 +598,200 @@ export class BookingService {
       case TimeInterval.YEAR:
         return Math.max(1, differenceInYears(endDate, startDate));
       default:
-        throw new BadRequestException(this.i18n.translate('booking.ERROR_INVALID_INTERVAL', { lang }));
+        return 1;
     }
   }
+  private generateReference(): string {
+  return `PAY-${moment().format('YYYYMMDDHHmmss')}-${randomUUID().slice(0, 8)}`.toUpperCase();
+}
 
-  // ===================================================
-  // CRON → Notify customer + merchant when booking ends
-  // Runs every 5 minutes; recovers missed notifications if server was down
-  // ===================================================
-  @Cron('*/5 * * * *')
-  async checkBookingEnd() {
-    // Use UTC now as the stored dates are UTC instants; for logging show ET
-    const nowUtc = moment().utc().toDate();
-    const nowEtStr = moment(nowUtc).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
 
-    const endedBookings = await this.bookingModel
-      .find({
-        endDate: { $lte: nowUtc },
-        status: BookingStatus.CONFIRMED,
-        $or: [{ notifiedEmail: { $ne: true } }, { notifiedSms: { $ne: true } }],
-      })
-      .populate<{ customer: UserDocument; merchant: UserDocument; asset: AssetDocument }>('customer merchant asset');
+private async notifyBookingCreatedPaymentRequired(
+  booking: BookingDocument,
+  customer: UserDocument,
+  merchant: UserDocument,
+  asset: AssetDocument
+) {
+  const startET = moment(booking.startDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
+  const endET = moment(booking.endDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
+  const ref = booking.externalPaymentRef;
+  const amount = booking.totalPrice;
+  const accountNumber = booking.merchantAccountNumber || (merchant as any)?.acountnumber || 'N/A';
 
-    this.logger.log(`Cron checkBookingEnd: found ${endedBookings.length} ended bookings at ET ${nowEtStr}`);
-
-    for (const booking of endedBookings) {
-      try {
-        const customer = booking.customer;
-        const merchant = booking.merchant;
-        const assetName = booking.asset?.name || 'asset';
-        const customerEmail = customer?.email;
-        const customerPhone = (customer?.phonenumber || '').toString();
-
-        // Email
-        if (!booking.notifiedEmail && customerEmail) {
-          try {
-            await this.mailService.sendMail(
-              customerEmail,
-              await this.i18n.translate('booking.EMAIL_SUBJECT_RENTAL_ENDED', { lang: 'en' }),
-              `<p>Hello ${customer.fullName},</p><p>Your rental for <strong>${assetName}</strong> has ended. Thank you!</p>`,
-            );
-            booking.notifiedEmail = true;
-          } catch (mailErr) {
-            this.logger.error(`Email failed for booking ${booking._id}: ${mailErr?.message}`);
-          }
-        }
-
-        // SMS
-        if (!booking.notifiedSms && customerPhone) {
-          try {
-            await this.smsService.sendSms(customerPhone, `Hello ${customer.fullName}, your rental for ${assetName} has ended. Thank you!`);
-            booking.notifiedSms = true;
-          } catch (smsErr) {
-            this.logger.error(`SMS failed for booking ${booking._id}: ${smsErr?.message}`);
-          }
-        }
-
-        // persist flags
-        if (booking.notifiedEmail || booking.notifiedSms) {
-          await booking.save();
-          this.logger.log(`Notifications updated for booking ${booking._id}: email=${booking.notifiedEmail} sms=${booking.notifiedSms}`);
-        }
-      } catch (err) {
-        this.logger.error(`Failed processing ended booking ${booking._id}: ${err.stack || err}`);
-      }
-    }
+  // Email to customer
+  try {
+    await this.mailService.sendMail(
+      customer.email,
+      'Booking Created — Payment Required',
+      `<p>Hello ${customer.fullName},</p>
+       <p>Your booking for <strong>${asset.name}</strong> is pending payment.</p>
+       <p>Gross Amount (VAT included): <strong>${amount}</strong></p>
+       <p>Payment Reference: <strong>${ref}</strong></p>
+       <p>Account Number: <strong>${accountNumber}</strong></p>
+       <p>Expires At (ET): <strong>${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}</strong></p>`
+    );
+  } catch (err) {
+    this.logger.warn(`Failed to send booking-created email to customer: ${err?.message}`);
   }
 
-  // ===================================================
-  // Helpers for notifications
-  // ===================================================
-  private async notifyBookingCreatedToBoth(
-    booking: BookingDocument,
-    customer: UserDocument,
-    merchant: UserDocument,
-    asset: AssetDocument,
-    lang: string,
-  ) {
-    const customerPhone = (customer.phonenumber || '').toString();
-    const merchantPhone = (merchant.phonenumber || '').toString();
-
-    const startET = moment(booking.startDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
-    const endET = moment(booking.endDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm');
-
-    // Subjects (i18n)
-    const customerSubject = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CREATED', { lang });
-    const merchantSubject = await this.i18n.translate('booking.EMAIL_SUBJECT_BOOKING_CREATED_MERCHANT', { lang });
-
-    // Customer email
+  // SMS to customer
+  if (customer.phonenumber) {
     try {
-      await this.mailService.sendMail(
-        customer.email,
-        customerSubject,
-        `<p>Hello ${customer.fullName},</p>
-         <p>Your booking for <strong>${asset.name}</strong> has been created and is pending confirmation.</p>
-         <p><strong>Rental Period:</strong> ${startET} → ${endET}</p>
-         <p><strong>Merchant:</strong> ${merchant.businessName || merchant.fullName}</p>`,
+      await this.smsService.sendSms(
+        customer.phonenumber.toString(),
+        `Booking created for ${asset.name}. Gross: ${amount} Ref: ${ref}. Account: ${accountNumber}. Pay before ${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}`
       );
     } catch (err) {
-      this.logger.warn('Failed to send booking-created email to customer: ' + err?.message);
+      this.logger.warn(`Failed to send SMS to customer: ${err?.message}`);
     }
+  }
 
-    // Merchant email
+  // Notify merchant by email
+  try {
+    await this.mailService.sendMail(
+      merchant.email,
+      'New Booking — Awaiting Payment',
+      `<p>Hello ${merchant.businessName || merchant.fullName},</p>
+       <p>Booking created for <strong>${asset.name}</strong>.</p>
+       <p>Customer: ${customer.fullName} (${customer.email})</p>
+       <p>Gross Amount: ${amount}</p>
+       <p>Payment Reference: <strong>${ref}</strong></p>`
+    );
+  } catch (err) {
+    this.logger.warn(`Failed to send booking-created email to merchant: ${err?.message}`);
+  }
+
+  // SMS to merchant
+  if (merchant.phonenumber) {
     try {
-      await this.mailService.sendMail(
-        merchant.email,
-        merchantSubject,
-        `<p>Hello ${merchant.businessName || merchant.fullName},</p>
-         <p>A new booking has been created for <strong>${asset.name}</strong>.</p>
-         <p><strong>Rental Period:</strong> ${startET} → ${endET}</p>
-         <p><strong>Customer:</strong> ${customer.fullName} (${customer.email})</p>`,
+      await this.smsService.sendSms(
+        merchant.phonenumber.toString(),
+        `New booking for ${asset.name}. Gross: ${amount} Ref: ${ref}`
       );
     } catch (err) {
-      this.logger.warn('Failed to send booking-created email to merchant: ' + err?.message);
+      this.logger.warn(`Failed to send SMS to merchant: ${err?.message}`);
     }
+  }
+}
 
-    // Customer SMS
-    if (customerPhone) {
-      try {
-        await this.smsService.sendSms(customerPhone, `Your booking for ${asset.name} is created. ${startET} → ${endET}`);
-      } catch (err) {
-        this.logger.warn('Failed to send booking-created SMS to customer: ' + err?.message);
-      }
-    }
+private async notifyMerchantPaymentReceived(booking: BookingDocument) {
+  const merchant = await this.userModel.findById(booking.merchant);
+  const customerName = booking.snapshot?.customerName || 'customer';
+  const msg = `Payment received for booking ${booking._id} (Ref: ${booking.externalPaymentRef}). Customer: ${customerName}. Please confirm the booking.`;
 
-    // Merchant SMS
-    if (merchantPhone) {
-      try {
-        await this.smsService.sendSms(merchantPhone, `New booking: ${asset.name} by ${customer.fullName}. ${startET} → ${endET}`);
-      } catch (err) {
-        this.logger.warn('Failed to send booking-created SMS to merchant: ' + err?.message);
-      }
+  if (!merchant) {
+    this.logger.warn(`Merchant not found for booking ${booking._id}`);
+    return;
+  }
+
+  // SMS
+  if (merchant.phonenumber) {
+    try {
+      await this.smsService.sendSms(merchant.phonenumber.toString(), msg);
+    } catch (err) {
+      this.logger.warn(`SMS to merchant failed: ${err?.message}`);
     }
   }
 
-  // ===================================================
-  // Build booking summary (returns ET-formatted dates)
-  // ===================================================
-  private async buildBookingSummary(
-    booking: BookingDocument,
-    customer: UserDocument,
-    merchant: UserDocument,
-    asset: AssetDocument,
-    availableUnitsAfterBooking: number,
-    pricePerUnit: number,
-    lang = 'en',
-  ) {
-    return {
-      message: await this.i18n.translate('booking.SUCCESS_BOOKING_CREATED', { lang }),
-      bookingSummary: {
-        bookingId: booking._id,
-        assetName: asset.name,
-        merchantName: merchant.businessName || merchant.fullName,
-        merchantEmail: merchant.email,
-        merchantPhone: merchant.phonenumber,
-        customerName: customer.fullName,
-        customerEmail: customer.email,
-        customerPhone: customer.phonenumber,
-        startDate: moment(booking.startDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm'),
-        endDate: moment(booking.endDate).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm'),
-        interval: booking.timeInterval,
-        numberOfProperty: booking.numberOfProperty,
-        numberOfUnits: booking.numberOfUnits,
-        pricePerUnit,
-        totalPrice: booking.totalPrice,
-        availableUnitsAfterBooking,
-        currency: asset.priceUnit,
-        securityDeposit: booking.securityDeposit,
-        status: booking.status,
-        createdBy: customer.email,
-      },
-    };
+  // Email
+  if (merchant.email) {
+    try {
+      await this.mailService.sendMail(merchant.email, 'Payment Received — Confirm Booking', `<p>${msg}</p>`);
+    } catch (err) {
+      this.logger.warn(`Email to merchant failed: ${err?.message}`);
+    }
   }
+}
+
+private async notifyCustomerBookingConfirmed(booking: BookingDocument) {
+  const customer = await this.userModel.findById(booking.customer);
+  const assetName = booking.snapshot?.assetName || 'asset';
+  const msg = `Your booking ${booking._id} has been confirmed by the merchant.`;
+
+  // SMS to customer
+  if (customer?.phonenumber) {
+    try {
+      await this.smsService.sendSms(customer.phonenumber.toString(), msg);
+    } catch (err) {
+      this.logger.warn(`SMS to customer failed: ${err?.message}`);
+    }
+  }
+
+  // Email to customer
+  if (customer?.email) {
+    try {
+      await this.mailService.sendMail(customer.email, 'Booking Confirmed', `<p>${msg}</p>`);
+    } catch (err) {
+      this.logger.warn(`Email to customer failed: ${err?.message}`);
+    }
+  }
+}
+  // ============================
+  // Bank Reconciliation (every 5 minutes)
+  // ============================
+  @Cron('*/5 * * * *') // runs every 5 minutes
+  private async reconcileBankPayments() {
+    this.logger.log('⏳ Running bank reconciliation...');
+
+    try {
+      // 1️⃣ Fetch all unpaid bookings
+      const unpaidBookings = await this.bookingModel.find({
+        paymentStatus: PaymentStatus.UNPAID,
+        expiresAt: { $gte: new Date() }, // not expired yet
+      }).lean();
+
+      if (!unpaidBookings.length) {
+        this.logger.log('✔ No unpaid bookings to reconcile.');
+        return;
+      }
+
+      // 2️⃣ Fetch bank transactions from CBE API or CSV webhook
+      const bankTransactions = await this.fetchCbeTransactions();
+      if (!bankTransactions || !bankTransactions.length) {
+        this.logger.warn('⚠ No transactions fetched from bank');
+        return;
+      }
+
+      // 3️⃣ Match transactions with bookings by reference & amount
+      for (const booking of unpaidBookings) {
+        const match = bankTransactions.find(
+          tx =>
+            tx.reference === booking.externalPaymentRef &&
+            Math.abs(Number(tx.amount) - Number(booking.totalPrice)) <= this.AMOUNT_TOLERANCE &&
+            tx.beneficiaryAccount === booking.merchantAccountNumber
+        );
+
+        if (match) {
+          this.logger.log(`✅ Reconciled booking REF=${booking.externalPaymentRef} via bank`);
+
+          // Update booking as paid
+          booking.paymentStatus = PaymentStatus.PAID;
+          booking.paymentApprovedAt = match.paidAt ? new Date(match.paidAt) : new Date();
+          booking.transactionId = match.transactionId;
+          booking.webhookPayload = match;
+
+          // save changes
+          await this.bookingModel.updateOne({ _id: booking._id }, booking);
+
+          // notify merchant
+          await this.notifyMerchantPaymentReceived(booking as any);
+        }
+      }
+    } catch (err) {
+      this.logger.error('🔥 Bank reconciliation failed', err?.message);
+    }
+  }
+
+  // ============================
+  // Fetch transactions from CBE
+  // ============================
+  private async fetchCbeTransactions(): Promise<any[]> {
+    // TODO: replace with actual API/CSV fetch logic
+    // Example structure:
+    // [
+    //   { reference: 'PAY-20250212-143522-9F2A1BC3', amount: 1520, transactionId: 'TX123', paidAt: '2025-02-12T14:35:22Z', beneficiaryAccount: '123456' }
+    // ]
+    return [];
+  }
+
 }
