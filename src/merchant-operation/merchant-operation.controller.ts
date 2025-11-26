@@ -20,6 +20,12 @@ import { MerchantOperationService } from './merchant-operation.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { BookingStatus } from '../booking/booking.schema';
+import { IsEnum } from 'class-validator';
+
+export class UpdateBookingStatusDto {
+  @IsEnum(BookingStatus)
+  status: BookingStatus;
+}
 
 @Controller('merchant/operations')
 @UseGuards(MerchantJwtAuthGuard)
@@ -136,21 +142,26 @@ export class MerchantOperationController {
   // 7️⃣ UPDATE BOOKING STATUS
   // =====================================================
   @Patch('bookings/:id/status')
-  async updateBookingStatus(
-    @Req() req,
-    @Param('id') id: string,
-    @Body() body
-  ) {
-    const merchantId = new Types.ObjectId(req.user.sub);
-    const lang = req.query.lang || 'en';
 
-    return await this.merchantOpsService.updateBookingStatus(
-      merchantId,
-      id,
-      body.status as BookingStatus,
-      lang
-    );
+async updateBookingStatus(
+  @Req() req,
+  @Param('id') id: string,
+  @Body() body: UpdateBookingStatusDto,
+  
+) {
+  if (!Types.ObjectId.isValid(id)) {
+    throw new BadRequestException('Invalid booking ID');
   }
+
+  const merchantId = new Types.ObjectId(req.user.sub);
+   const lang = req.query.lang || 'en';
+  return this.merchantOpsService.updateBookingStatus(
+    merchantId,
+    id,
+    body.status,
+    lang || 'en',
+  );
+}
 
   // =====================================================
   // 8️⃣ DELETE BOOKING

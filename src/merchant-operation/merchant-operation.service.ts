@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { I18nService } from 'nestjs-i18n';
-import { Booking, BookingDocument } from '../booking/booking.schema';
+import { Booking, BookingDocument,PaymentStatus } from '../booking/booking.schema';
 import { Asset, AssetDocument } from '../property/property.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { BookingStatus } from '../booking/booking.schema';
@@ -191,7 +191,10 @@ export class MerchantOperationService {
           endDate: b.endDate,
           totalPrice: b.totalPrice,
           status: b.status,
-          numberOfProperty: b.numberOfProperty
+          numberOfProperty: b.numberOfProperty,
+          // 💳 ✅ NEW: Payment status
+        paymentStatus: b.paymentStatus,
+        paymentProofPath:b.paymentProofPath
         })),
       };
     } catch (error) {
@@ -348,28 +351,71 @@ export class MerchantOperationService {
       message: await this.i18n.translate('merchant-operation.SUCCESS_PROPERTY_DELETED', { lang }),
     };
   }
+// ===================================================
+// 5️⃣ Update booking status (confirm, cancel, complete)
+// ===================================================
+async updateBookingStatus(
+  merchantId: Types.ObjectId,
+  bookingId: string,
+  status: BookingStatus,
+  lang: string,
+) {
+  // 1️⃣ Decide payment status based on booking status
+  let paymentStatus: PaymentStatus | undefined;
 
-  // ===================================================
-  // 5️⃣ Update booking status (confirm, cancel, complete)
-  // ===================================================
-  async updateBookingStatus(merchantId: Types.ObjectId, bookingId: string, status: BookingStatus, lang: string) {
-    const booking = await this.bookingModel.findOneAndUpdate(
-      { _id: bookingId, merchant: merchantId },
-      { status },
-      { new: true },
-    );
+  switch (status) {
+    case BookingStatus.CONFIRMED:
+      // Do not force PAID unless already verified
+      paymentStatus = PaymentStatus.PENDING_REVIEW;
+      break;
 
-    if (!booking) {
-      throw new NotFoundException(
-        await this.i18n.translate('merchant-operation.ERROR_BOOKING_NOT_FOUND', { lang }),
-      );
-    }
+    case BookingStatus.COMPLETED:
+      paymentStatus = PaymentStatus.PAID;
+      break;
 
-    return {
-      message: await this.i18n.translate('merchant-operation.SUCCESS_BOOKING_UPDATED', { lang }),
-      booking,
-    };
+    case BookingStatus.CANCELLED:
+      paymentStatus = PaymentStatus.EXPIRED;
+      break;
+
+    case BookingStatus.REJECTED:
+      paymentStatus = PaymentStatus.UNPAID;
+      break;
   }
+
+  // 2️⃣ Update booking
+  const booking = await this.bookingModel.findOneAndUpdate(
+    { _id: bookingId, merchant: merchantId },
+    {
+      status,
+      ...(paymentStatus && { paymentStatus }), // ✅ update only if set
+    },
+    { new: true },
+  );
+
+  if (!booking) {
+    throw new NotFoundException(
+      await this.i18n.translate(
+        'merchant-operation.ERROR_BOOKING_NOT_FOUND',
+        { lang },
+      ),
+    );
+  }
+
+  // 3️⃣ Response (explicit fields)
+  return {
+    message: await this.i18n.translate(
+      'merchant-operation.SUCCESS_BOOKING_UPDATED',
+      { lang },
+    ),
+    booking: {
+      bookingId: booking._id,
+      status: booking.status,
+      paymentStatus: booking.paymentStatus,
+      totalPrice: booking.totalPrice,
+      
+    },
+  };
+}
 
   // ===================================================
   // 6️⃣ Delete booking
