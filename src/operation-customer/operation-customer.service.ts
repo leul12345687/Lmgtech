@@ -39,14 +39,11 @@ export class CustomerOperationsService {
 
 
 // ===========================================================
-// 1️⃣ RETRIEVE PROPERTIES BY CATEGORY (AND MERGE BOOKING DATA)
-// ===========================================================
-async getPropertiesByCategory(category: string, lang?: string) {
+async getPropertiesByCategory(category: string, lang?: string, customCategory?: string) {
   try {
-    // 1️⃣ Get all properties matching the category
     const query: any = { category };
-    
-    // We populate only the merchant here, bookings are handled separately
+    if (customCategory) query.customCategory = customCategory;
+
     const assets = await this.assetModel
       .find(query)
       .populate('merchant', 'fullName email phonenumber businessName acountnumber')
@@ -54,56 +51,46 @@ async getPropertiesByCategory(category: string, lang?: string) {
       .exec();
 
     if (!assets.length) {
-      throw new NotFoundException(
-        await this.i18n.translate('customer-operation.ERROR_NO_PROPERTY_FOUND', { lang }),
-      );
+      return {
+        message: await this.i18n.translate('customer-operation.ERROR_NO_PROPERTY_FOUND', { lang }),
+        category,
+        totalProperties: 0,
+        properties: [],
+      };
     }
-    
-    // 2️⃣ Get all bookings related to these properties
-    const propertyIds = assets.map((a) => a._id);
-    
+
+    const propertyIds = assets.map(a => a._id);
+
     const bookings = await this.bookingModel
       .find({ asset: { $in: propertyIds } })
-      // Select the fields needed for the customer view
-      .select('asset startDate endDate numberOfProperty status') 
+      .select('asset startDate endDate numberOfProperty status')
       .lean();
 
-    // 3️⃣ Group bookings by property (Asset)
     const bookingMap = bookings.reduce((acc, booking) => {
-      // The 'asset' field holds the ObjectId reference back to the Asset
-      const propertyId = booking.asset.toString(); 
+      const propertyId = booking.asset.toString();
       if (!acc[propertyId]) acc[propertyId] = [];
-      
-      // Push only the necessary booking details
       acc[propertyId].push({
         startDate: booking.startDate,
         endDate: booking.endDate,
         numberOfProperty: booking.numberOfProperty,
-        status: booking.status, // Include status for clarity
+        status: booking.status,
       });
       return acc;
     }, {} as Record<string, any[]>);
 
-    // 4️⃣ Merge asset info with its related booking data
-    const properties = assets.map((asset) => {
+    const properties = assets.map(asset => {
       const merchant = asset.merchant as any;
       const propertyIdString = asset._id.toString();
-      
-      // Get the array of bookings for this specific property ID
-      const associatedBookings = bookingMap[propertyIdString] || []; 
+      const associatedBookings = bookingMap[propertyIdString] || [];
 
       return {
-        // 🧱 Basic property info
         name: asset.name,
         description: asset.description,
         category: asset.category,
-        priceUnit: asset.priceUnit,
+        customCategory: asset.customCategory || null,
         numberOfProperty: asset.numberOfProperty,
         status: asset.status,
-        customCategory: asset.customCategory, // ✅ Add this
         imageUrls: asset.imageUrls || [],
-
-        // 💰 Rental prices
         rentalPrice: {
           perHour: asset.rentalPriceperhour,
           perDay: asset.rentalPriceperday,
@@ -111,8 +98,6 @@ async getPropertiesByCategory(category: string, lang?: string) {
           perMonth: asset.rentalPricepermonth,
           perYear: asset.rentalPriceperyear,
         },
-
-        // 🧍 Merchant info
         merchant: {
           name: merchant?.fullName || 'N/A',
           acountnumber: merchant?.acountnumber,
@@ -120,21 +105,15 @@ async getPropertiesByCategory(category: string, lang?: string) {
           phone: merchant?.phonenumber || 'N/A',
           businessName: merchant?.businessName || 'N/A',
         },
-
-        // 📅 All associated bookings (merged data)
-        bookings: associatedBookings, // This array replaces the old 'bookingDetails: null'
+        bookings: associatedBookings,
       };
     });
 
-    // 5️⃣ Return final response
     return {
-      message: await this.i18n.translate(
-        'customer-operation.SUCCESS_PROPERTY_FETCHED',
-        { lang },
-      ),
+      message: await this.i18n.translate('customer-operation.SUCCESS_PROPERTY_FETCHED', { lang }),
       category,
       totalProperties: properties.length,
-      properties: properties,
+      properties,
     };
   } catch (error) {
     console.error('❌ Error fetching properties:', error);
@@ -142,7 +121,8 @@ async getPropertiesByCategory(category: string, lang?: string) {
       await this.i18n.translate('customer-operation.ERROR_INTERNAL', { lang }),
     );
   }
-} 
+}
+
   // ===========================================================
   // 2️⃣ GET BOOKINGS CREATED BY LOGGED-IN CUSTOMER
   // ===========================================================

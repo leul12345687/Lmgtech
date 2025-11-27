@@ -34,16 +34,23 @@ export class CustomerOperationsController {
   // 1️⃣ GET PROPERTIES BY CATEGORY
   // ===========================================================
   @Get('properties')
-  async getPropertiesByCategory(@Query('category') category: string, @Req() req) {
-    try {
-      const lang = req.query.lang || 'en';
-      return await this.customerOpsService.getPropertiesByCategory(category, lang);
-    } catch (error) {
-      this.logger.error('❌ Error fetching properties by category:', error);
-      throw new InternalServerErrorException('Failed to fetch properties.');
-    }
+async getPropertiesByCategory(
+  @Query('category') category: string,
+  @Query('customCategory') customCategory: string, // ✅ optional custom category
+  @Req() req
+) {
+  try {
+    const lang = req.query.lang || 'en';
+    return await this.customerOpsService.getPropertiesByCategory(
+      category,
+      lang,
+      customCategory || undefined // pass only if defined
+    );
+  } catch (error) {
+    this.logger.error('❌ Error fetching properties by category:', error);
+    throw new InternalServerErrorException('Failed to fetch properties.');
   }
-
+}
   // ===========================================================
   // 2️⃣ GET BOOKINGS OF LOGGED-IN CUSTOMER
   // ===========================================================
