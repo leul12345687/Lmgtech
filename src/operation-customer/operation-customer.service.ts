@@ -100,6 +100,7 @@ async getPropertiesByCategory(category: string, lang?: string) {
         priceUnit: asset.priceUnit,
         numberOfProperty: asset.numberOfProperty,
         status: asset.status,
+        customCategory: asset.customCategory, // ✅ Add this
         imageUrls: asset.imageUrls || [],
 
         // 💰 Rental prices
