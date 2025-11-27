@@ -9,16 +9,16 @@ export enum BookingStatus {
   PENDING = 'PENDING',
   CONFIRMED = 'CONFIRMED',
   CANCELLED = 'CANCELLED',
-  COMPLETED='COMPLETED',
-  REJECTED='REJECTED'
+  COMPLETED = 'COMPLETED',
+  REJECTED = 'REJECTED',
 }
 
 export enum PaymentStatus {
   UNPAID = 'UNPAID',
   PENDING = 'PENDING',
-  PAID = 'PAID', 
-  PENDING_REVIEW = 'PENDING_REVIEW', // ✅ ADD THIS
-  EXPIRED = 'EXPIRED'
+  PAID = 'PAID',
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  EXPIRED = 'EXPIRED',
 }
 
 export enum TimeInterval {
@@ -29,7 +29,12 @@ export enum TimeInterval {
   YEAR = 'year',
 }
 
-export type BookingDocument = Booking & Document;
+// ✅ Include timestamps in document type
+export type BookingDocument = Booking &
+  Document & {
+    createdAt: Date;
+    updatedAt: Date;
+  };
 
 @Schema({ timestamps: true, collection: 'bookings' })
 export class Booking {
@@ -42,11 +47,13 @@ export class Booking {
   @Prop({ type: Types.ObjectId, ref: User.name, required: true })
   merchant: Types.ObjectId;
 
-  // Asset
+  // ============================
+  // ASSET
+  // ============================
   @Prop({ type: Types.ObjectId, ref: Asset.name, required: true })
   asset: Types.ObjectId;
 
-
+  // ============================
   // RENTAL PERIOD
   // ============================
   @Prop({ required: true })
@@ -73,37 +80,36 @@ export class Booking {
   @Prop()
   totalPrice?: number;
 
-  // System fee/VAT for platform owner
   @Prop({ default: 0 })
   systemVatFee: number;
 
   @Prop({ default: 0 })
   securityDeposit: number;
+
   // ============================
-  // PAYMENT PROCESSING
+  // STATUS & PAYMENT
   // ============================
-  @Prop({ default: BookingStatus.PENDING })
+  @Prop({ enum: BookingStatus, default: BookingStatus.PENDING })
   status: BookingStatus;
 
   @Prop({ enum: PaymentStatus, default: PaymentStatus.UNPAID })
   paymentStatus: PaymentStatus;
-// Mongoose will automatically add _id, but for clarity:
-    _id: Types.ObjectId;
-  // unique reference for bank
+
+  // ============================
+  // PAYMENT PROCESSING
+  // ============================
   @Prop({ default: null })
   externalPaymentRef?: string;
 
-  @Prop({ type: Date, required: false, default: null })
-expiresAt: Date | null;
-  // merchant bank account number (NOT email)
-  @Prop({ required: false,default: false })
+  @Prop({ type: Date, default: null })
+  expiresAt?: Date | null;
+
+  @Prop()
   merchantAccountNumber?: string;
 
-  // path for receipt upload (optional)
   @Prop()
   paymentProofPath?: string;
 
-  // after bank webhook
   @Prop()
   transactionId?: string;
 
@@ -121,9 +127,10 @@ expiresAt: Date | null;
 
   @Prop({ default: null })
   cancelledAt?: Date;
-
+// Mongoose will automatically add _id, but for clarity:
+    _id: Types.ObjectId; 
   // ============================
-  // SNAPSHOT — IMMUTABLE INFO
+  // SNAPSHOT (IMMUTABLE)
   // ============================
   @Prop({
     type: {
@@ -140,45 +147,35 @@ expiresAt: Date | null;
   snapshot: Record<string, any>;
 
   // ============================
-  // NOTIFICATION FLAGS
+  // NOTIFICATIONS
   // ============================
   @Prop({ default: false })
   notifiedEmail: boolean;
 
   @Prop({ default: false })
   notifiedSms: boolean;
-   // ============================
-  // PAYMENT AMOUNTS
-  // ============================
- 
 
   @Prop({ default: 'ETB' })
   currency: string;
-// ============================
-// PAYMENT AMOUNTS (REQUIRED)
-// ============================
-
-
-@Prop({ required:false,default:null })
-netAmount: number; // merchant share
-
-@Prop({ required: false,default:null })
-vatAmount: number;
-
-@Prop({ required:false,default:null })
-vatRate: number;
-
-// ============================
-// EXPIRY (FIX TYPE)
-// ============================
 
   // ============================
-  // PAYMENT REF
+  // PAYMENT AMOUNTS
   // ============================
-  
+  @Prop({ default: null })
+  netAmount?: number;
 
+  @Prop({ default: null })
+  vatAmount?: number;
+
+  @Prop({ default: null })
+  vatRate?: number;
+
+  // ============================
+  // FLAGS & HISTORY
+  // ============================
   @Prop({ default: false })
   notificationSentAfterConfirm: boolean;
+
   @Prop({ default: false })
   confirmedNotified: boolean;
 

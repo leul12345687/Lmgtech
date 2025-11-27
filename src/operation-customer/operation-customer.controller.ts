@@ -15,6 +15,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import * as sharp from 'sharp'
 import { Types } from 'mongoose';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';

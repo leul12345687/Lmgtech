@@ -331,7 +331,7 @@ async uploadPaymentProof(
 
   if (autoVerified) {
     booking.paymentStatus = PaymentStatus.PAID;
-    booking.status = BookingStatus.CONFIRMED;
+    booking.status = BookingStatus.COMPLETED;
     booking.paymentApprovedAt = new Date();
     booking.bookingConfirmedAt = new Date();
   } else {
@@ -347,6 +347,7 @@ async uploadPaymentProof(
     statusCode: 200,
     autoVerified,
     paymentStatus: booking.paymentStatus,
+    status:booking.status,
     extracted,
     paymentProofUrl,
     message: autoVerified

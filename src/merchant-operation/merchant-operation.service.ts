@@ -350,47 +350,25 @@ export class MerchantOperationService {
     return {
       message: await this.i18n.translate('merchant-operation.SUCCESS_PROPERTY_DELETED', { lang }),
     };
+
   }
 // ===================================================
-// 5️⃣ Update booking status (confirm, cancel, complete)
+// 5️⃣ User updates booking & payment status (self-service)
 // ===================================================
 async updateBookingStatus(
-  merchantId: Types.ObjectId,
+  userId: Types.ObjectId,
   bookingId: string,
-  status: BookingStatus,
+  payload: {
+    status?: BookingStatus;
+    paymentStatus?: PaymentStatus;
+  },
   lang: string,
 ) {
-  // 1️⃣ Decide payment status based on booking status
-  let paymentStatus: PaymentStatus | undefined;
-
-  switch (status) {
-    case BookingStatus.CONFIRMED:
-      // Do not force PAID unless already verified
-      paymentStatus = PaymentStatus.PENDING_REVIEW;
-      break;
-
-    case BookingStatus.COMPLETED:
-      paymentStatus = PaymentStatus.PAID;
-      break;
-
-    case BookingStatus.CANCELLED:
-      paymentStatus = PaymentStatus.EXPIRED;
-      break;
-
-    case BookingStatus.REJECTED:
-      paymentStatus = PaymentStatus.UNPAID;
-      break;
-  }
-
-  // 2️⃣ Update booking
-  const booking = await this.bookingModel.findOneAndUpdate(
-    { _id: bookingId, merchant: merchantId },
-    {
-      status,
-      ...(paymentStatus && { paymentStatus }), // ✅ update only if set
-    },
-    { new: true },
-  );
+  // 1️⃣ Fetch booking
+  const booking = await this.bookingModel.findOne({
+    _id: bookingId,
+    merchant: userId, // or customer: userId
+  });
 
   if (!booking) {
     throw new NotFoundException(
@@ -401,21 +379,88 @@ async updateBookingStatus(
     );
   }
 
-  // 3️⃣ Response (explicit fields)
+  const updateData: Partial<Booking> & { updatedAt?: Date } = {};
+
+  // ===================================================
+  // 2️⃣ Handle STATUS update
+  // ===================================================
+  if (payload.status) {
+    updateData.status = payload.status;
+
+    switch (payload.status) {
+      case BookingStatus.CONFIRMED:
+        updateData.paymentStatus ??= PaymentStatus.PENDING_REVIEW;
+        break;
+
+      case BookingStatus.COMPLETED:
+        updateData.paymentStatus ??= PaymentStatus.PAID;
+        break;
+
+      case BookingStatus.CANCELLED:
+        updateData.paymentStatus ??= PaymentStatus.EXPIRED;
+        break;
+
+      case BookingStatus.REJECTED:
+        updateData.paymentStatus ??= PaymentStatus.UNPAID;
+        break;
+    }
+  }
+
+  // ===================================================
+  // 3️⃣ Handle PAYMENT STATUS update
+  // ===================================================
+  if (payload.paymentStatus) {
+    updateData.paymentStatus = payload.paymentStatus;
+  }
+
+  // ❌ Nothing to update safeguard
+  if (!Object.keys(updateData).length) {
+    throw new BadRequestException(
+      await this.i18n.translate(
+        'merchant-operation.ERROR_NOTHING_TO_UPDATE',
+        { lang },
+      ),
+    );
+  }
+
+  // ===================================================
+  // 4️⃣ Force system time update
+  // ===================================================
+  updateData.updatedAt = new Date(); // ⭐ SYSTEM TIME
+
+  const updatedBooking = await this.bookingModel.findByIdAndUpdate(
+    bookingId,
+    { $set: updateData },
+    {
+      new: true,
+      timestamps: false, // prevent mongoose overriding our value
+    },
+  );
+
+  if (!updatedBooking) {
+    throw new InternalServerErrorException(
+      'Failed to update booking',
+    );
+  }
+
+  // ===================================================
+  // 5️⃣ Response
+  // ===================================================
   return {
     message: await this.i18n.translate(
       'merchant-operation.SUCCESS_BOOKING_UPDATED',
       { lang },
     ),
     booking: {
-      bookingId: booking._id,
-      status: booking.status,
-      paymentStatus: booking.paymentStatus,
-      totalPrice: booking.totalPrice,
-      
+      bookingId: updatedBooking._id.toString(),
+      status: updatedBooking.status,
+      paymentStatus: updatedBooking.paymentStatus,
+      totalPrice: updatedBooking.totalPrice,
+      updatedAt: updatedBooking.updatedAt, // ✅ system-based time
     },
   };
 }
+
 
   // ===================================================
   // 6️⃣ Delete booking

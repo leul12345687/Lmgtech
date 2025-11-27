@@ -5,7 +5,7 @@ import {
   Delete,
   Body,
   Param,
-  Req,
+  Req,Query,
   UseGuards,
   InternalServerErrorException,
   UseInterceptors,
@@ -19,12 +19,19 @@ import { MerchantOperationService } from './merchant-operation.service';
 
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import { BookingStatus } from '../booking/booking.schema';
-import { IsEnum } from 'class-validator';
+
+
+import { IsEnum, IsOptional } from 'class-validator';
+import { BookingStatus, PaymentStatus } from '../booking/booking.schema';
 
 export class UpdateBookingStatusDto {
+  @IsOptional()
   @IsEnum(BookingStatus)
-  status: BookingStatus;
+  status?: BookingStatus;
+
+  @IsOptional()
+  @IsEnum(PaymentStatus)
+  paymentStatus?: PaymentStatus;
 }
 
 @Controller('merchant/operations')
@@ -137,31 +144,43 @@ export class MerchantOperationController {
       lang
     );
   }
-
-  // =====================================================
-  // 7️⃣ UPDATE BOOKING STATUS
-  // =====================================================
-  @Patch('bookings/:id/status')
-
+// =====================================================
+// 7️⃣ UPDATE BOOKING STATUS & PAYMENT STATUS (Self-service)
+// =====================================================
+@Patch('bookings/:id/status')
 async updateBookingStatus(
   @Req() req,
   @Param('id') id: string,
   @Body() body: UpdateBookingStatusDto,
-  
+  @Query('lang') lang = 'en',
 ) {
+  // 1️⃣ Validate booking ID
   if (!Types.ObjectId.isValid(id)) {
     throw new BadRequestException('Invalid booking ID');
   }
 
-  const merchantId = new Types.ObjectId(req.user.sub);
-   const lang = req.query.lang || 'en';
+  // 2️⃣ Ensure at least one field is provided
+  if (!body.status && !body.paymentStatus) {
+    throw new BadRequestException(
+      'Either status or paymentStatus must be provided',
+    );
+  }
+
+  // 3️⃣ Extract authenticated user (merchant or customer)
+  const userId = new Types.ObjectId(req.user.sub);
+
+  // 4️⃣ Delegate logic to service (controller stays thin)
   return this.merchantOpsService.updateBookingStatus(
-    merchantId,
+    userId,
     id,
-    body.status,
-    lang || 'en',
+    {
+      status: body.status,
+      paymentStatus: body.paymentStatus,
+    },
+    lang,
   );
 }
+
 
   // =====================================================
   // 8️⃣ DELETE BOOKING

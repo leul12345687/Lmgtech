@@ -230,7 +230,7 @@ export class BookingService {
       .find({
         asset: asset._id,
         status: {
-          $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+          $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED,BookingStatus.COMPLETED],
         },
         startDate: { $lte: endUTC },
         endDate: { $gte: startUTC },
@@ -545,7 +545,7 @@ private async expireUnpaidBookings() {
 @Cron('*/5 * * * *') // every 5 minutes
 async notifyConfirmedBookings() {
   const confirmed = await this.bookingModel.find({
-    status: BookingStatus.CONFIRMED,
+    status: BookingStatus.COMPLETED,
     notificationSentAfterConfirm: { $ne: true }
   });
 
