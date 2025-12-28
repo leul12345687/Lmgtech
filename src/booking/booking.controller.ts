@@ -13,15 +13,14 @@ import { TimeInterval } from './booking.schema';
 import { CustomerJwtAuthGuard } from 'src/customer/customerAuthGuard';
 import { Types } from 'mongoose';
 
-@Controller('booking')
+@Controller()
 export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
 
   // ===================================================
   //  ✅ Create Booking (Customer Only)
   // ===================================================
-  
-  @Post('create')
+  @Post('booking/create')
   @UseGuards(CustomerJwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   async createBooking(@Req() req, @Body() body) {
@@ -56,7 +55,6 @@ export class BookingController {
       throw new BadRequestException('Unauthorized');
     }
 
-    // 🔥 Call booking service
     const bookingResult = await this.bookingService.createBookingForPayment(
       new Types.ObjectId(customerId),
       assetName,
@@ -75,26 +73,20 @@ export class BookingController {
   // ===================================================
   //  🔔 Bank / Chapa Webhook Endpoint
   // ===================================================
-  // No authentication needed (webhook is public, verify via secret or IP in production)
-  @Post('webhook')
- // src/chapa/chapa.controller.ts
-@Post('webhook')
-@HttpCode(HttpStatus.OK)
-async handleWebhook(
-  @Req() req: Request,
-  @Body() payload: any,
-) {
-  if (!payload) {
-    return { ok: true };
-  }
+  // PUBLIC endpoint for Chapa webhook
+  @Post('/chapa/webhook')
+  @HttpCode(HttpStatus.OK)
+  async handleChapaWebhook(@Body() payload: any) {
+    if (!payload) {
+      return { ok: true };
+    }
 
-  try {
-    await this.bookingService.handleChapaWebhook(req, payload);
-    return { ok: true };
-  } catch (error) {
-    // NEVER throw — Chapa must receive 200 OK
-    console.error('❌ Webhook error:', error?.message || error);
-    return { ok: false };
+    try {
+      await this.bookingService.handleChapaWebhook(payload); // Only payload, no req
+      return { ok: true };
+    } catch (error) {
+      console.error('❌ Webhook processing error:', error?.message || error);
+      return { ok: false };
+    }
   }
-}
 }

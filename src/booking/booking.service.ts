@@ -247,15 +247,16 @@ export class BookingService {
     this.logger.error(err);
     throw new InternalServerErrorException('Booking creation failed');
   }
-}
-// ===================================================
+}// ===================================================
 // Chapa Webhook → Update Booking Payment Status
 // ===================================================
-public async handleChapaWebhook(req: any, payload: any) {
+public async handleChapaWebhook(payload: any) {
   const reference =
     payload?.tx_ref ||
     payload?.reference ||
-    payload?.data?.tx_ref;
+    payload?.data?.tx_ref ||
+    payload?.data?.reference ||
+    payload?.meta?.bookingRef;
 
   if (!reference) {
     throw new BadRequestException('Missing tx_ref in webhook');
@@ -267,7 +268,7 @@ public async handleChapaWebhook(req: any, payload: any) {
 
   if (!booking) {
     this.logger.warn(`⚠️ Webhook for unknown ref: ${reference}`);
-    return { ok: false };
+    return { ok: true }; // Safe for retries
   }
 
   // 🔁 IDEMPOTENCY
@@ -276,31 +277,28 @@ public async handleChapaWebhook(req: any, payload: any) {
     return { ok: true };
   }
 
-  // 🔐 VERIFY WITH CHAPA (DO NOT TRUST WEBHOOK)
+  // 🔐 VERIFY WITH CHAPA
   const verification = await this.chapaService.verifyTransaction(reference);
 
   booking.webhookPayload = payload;
   booking.paymentVerification = verification.raw;
 
-  // ⏳ Not successful yet
   if (verification.status !== 'success') {
     booking.paymentStatus = PaymentStatus.PENDING;
     await booking.save();
     return { ok: true };
   }
 
-  // 💰 AMOUNT VALIDATION (FLOAT SAFE)
-  const expectedAmount = Number(booking.totalPrice);
-  const receivedAmount = Number(verification.amount);
+  // 💰 AMOUNT VALIDATION (ROUND TO 2 DECIMALS)
+  const expectedAmount = Math.round(Number(booking.totalPrice) * 100) / 100;
+  const receivedAmount = Math.round(Number(verification.amount) * 100) / 100;
 
-  if (Math.abs(expectedAmount - receivedAmount) > 0.5) {
+  if (expectedAmount !== receivedAmount) {
     this.logger.error(
       `❌ Amount mismatch for ${reference}: expected ${expectedAmount}, got ${receivedAmount}`,
     );
-
     booking.paymentStatus = PaymentStatus.MISMATCH;
     await booking.save();
-
     return { ok: false };
   }
 
@@ -319,7 +317,7 @@ public async handleChapaWebhook(req: any, payload: any) {
   await this.notifyMerchantPaymentReceived(booking);
 
   this.logger.log(
-    `✅ Payment confirmed for booking ${booking._id}`,
+    `✅ Payment confirmed for booking ${booking._id} (ref: ${reference})`,
   );
 
   return { ok: true };
