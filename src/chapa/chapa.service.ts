@@ -12,8 +12,11 @@ export class ChapaService {
   private readonly logger = new Logger(ChapaService.name);
 
   private readonly baseUrl = 'https://api.chapa.co/v1/transaction';
-  private readonly secretKey = process.env.CHAPA_SECRET_KEY;
+  private readonly secretKey = process.env.CHAPA_SECRET_KEY!;
   private readonly http: AxiosInstance;
+
+  // Chapa test limit
+  private readonly MAX_TEST_AMOUNT = 1_000_000;
 
   constructor() {
     if (!this.secretKey) {
@@ -41,10 +44,10 @@ export class ChapaService {
     customerFirstName: string;
     customerLastName?: string;
     customerPhone?: string;
-    callbackUrl: string; // webhook
-    returnUrl: string;   // frontend redirect
+    callbackUrl: string;
+    returnUrl: string;
     description?: string;
-  }) {
+  }): Promise<{ checkoutUrl: string }> {
     const {
       txRef,
       amount,
@@ -58,9 +61,21 @@ export class ChapaService {
       description,
     } = params;
 
-    if (!txRef || amount <= 0 || !customerEmail) {
+    if (!txRef || !customerEmail || amount <= 0) {
       throw new BadRequestException('Invalid Chapa parameters');
     }
+
+    // 🚨 Chapa test limit guard
+    if (amount > this.MAX_TEST_AMOUNT) {
+      throw new BadRequestException(
+        `Amount exceeds Chapa test limit (${this.MAX_TEST_AMOUNT} ETB)`,
+      );
+    }
+
+    // 🔐 Description max 50 chars
+    const safeDescription =
+      description?.slice(0, 50) ??
+      `Booking payment`.slice(0, 50);
 
     try {
       const res = await this.http.post('/initialize', {
@@ -78,7 +93,7 @@ export class ChapaService {
 
         customization: {
           title: 'Booking Payment',
-          description: description ?? `Payment for booking ${txRef}`,
+          description: safeDescription,
         },
 
         meta: {
@@ -87,19 +102,26 @@ export class ChapaService {
       });
 
       const checkoutUrl = res?.data?.data?.checkout_url;
+
       if (!checkoutUrl) {
+        this.logger.error('Invalid Chapa response', res?.data);
         throw new InternalServerErrorException('Invalid Chapa response');
       }
 
       return { checkoutUrl };
-    } catch (err) {
-      this.logger.error('Chapa initialize failed', err?.response?.data || err);
-      throw new InternalServerErrorException('Failed to initialize Chapa');
+    } catch (err: any) {
+      this.logger.error(
+        'Chapa initialize failed',
+        err?.response?.data || err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to initialize Chapa payment',
+      );
     }
   }
 
   // ===================================================
-  // Verify payment (used by webhook or polling)
+  // Verify payment
   // ===================================================
   async verifyTransaction(txRef: string) {
     if (!txRef) {
@@ -109,21 +131,29 @@ export class ChapaService {
     try {
       const res = await this.http.get(`/verify/${txRef}`);
       const data = res?.data?.data;
+
       if (!data) {
-        throw new InternalServerErrorException('Invalid verification response');
+        throw new InternalServerErrorException(
+          'Invalid verification response',
+        );
       }
 
       return {
-        status: data.status, // success | failed | pending
+        status: data.status,
         amount: Number(data.amount),
         currency: data.currency,
         transactionId: data.id,
         paidAt: data.created_at,
         raw: data,
       };
-    } catch (err) {
-      this.logger.error('Chapa verification failed', err?.response?.data || err);
-      throw new InternalServerErrorException('Failed to verify Chapa payment');
+    } catch (err: any) {
+      this.logger.error(
+        'Chapa verification failed',
+        err?.response?.data || err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to verify Chapa payment',
+      );
     }
   }
 }

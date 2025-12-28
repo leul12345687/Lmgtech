@@ -66,163 +66,189 @@ export class BookingService {
   // CREATE BOOKING → INITIATE CHAPA → RETURN CHECKOUT URL
   // ===================================================
   public async createBookingForPayment(
-    customerId: Types.ObjectId,
-    assetName: string,
-    merchantEmail: string,
-    startDate: string | Date,
-    endDate: string | Date,
-    timeInterval: TimeInterval,
-    numberOfProperty: number,
-    securityDeposit = 0,
-    lang = 'en',
-  ) {
-    /* ---------- VALIDATION ---------- */
-    if (!customerId || !assetName || !merchantEmail || numberOfProperty <= 0) {
-      throw new BadRequestException('Invalid booking data');
-    }
+  customerId: Types.ObjectId,
+  assetName: string,
+  merchantEmail: string,
+  startDate: string | Date,
+  endDate: string | Date,
+  timeInterval: TimeInterval,
+  numberOfProperty: number,
+  securityDeposit = 0,
+  lang = 'en',
+) {
+  /* ---------- VALIDATION ---------- */
+  if (!customerId || !assetName || !merchantEmail || numberOfProperty <= 0) {
+    throw new BadRequestException('Invalid booking data');
+  }
 
-    /* ---------- LOAD USERS ---------- */
-    const merchant = await this.userModel.findOne({
-      email: merchantEmail,
-      role: UserRole.MERCHANT,
-    });
-    if (!merchant || !merchant.acountnumber) {
-      throw new BadRequestException('Merchant not properly configured');
-    }
+  /* ---------- LOAD USERS ---------- */
+  const merchant = await this.userModel.findOne({
+    email: merchantEmail,
+    role: UserRole.MERCHANT,
+  });
 
-    const customer = await this.userModel.findById(customerId);
-    if (!customer) {
-      throw new NotFoundException('Customer not found');
-    }
+  if (!merchant || !merchant.acountnumber) {
+    throw new BadRequestException('Merchant not properly configured');
+  }
 
-    /* ---------- LOAD ASSET ---------- */
-    const assetModel = this.propertyService['assetModel'] as Model<AssetDocument>;
-    const asset = await assetModel.findOne({
-      name: assetName,
-      merchant: merchant._id,
-      status: AssetStatus.AVAILABLE,
-    });
-    if (!asset) {
-      throw new NotFoundException('Asset not available');
-    }
+  const customer = await this.userModel.findById(customerId);
+  if (!customer) {
+    throw new NotFoundException('Customer not found');
+  }
 
-    /* ---------- DATE HANDLING ---------- */
-    const startUTC = moment.tz(startDate, this.ET_TIMEZONE).utc().toDate();
-    const endUTC = moment.tz(endDate, this.ET_TIMEZONE).utc().toDate();
-    if (endUTC <= startUTC) {
-      throw new BadRequestException('Invalid date range');
-    }
+  /* ---------- LOAD ASSET ---------- */
+  const assetModel = this.propertyService['assetModel'] as Model<AssetDocument>;
+  const asset = await assetModel.findOne({
+    name: assetName,
+    merchant: merchant._id,
+    status: AssetStatus.AVAILABLE,
+  });
 
-    /* ---------- PRICING ---------- */
-    const units = this.calculateDuration(startUTC, endUTC, timeInterval);
-    if (units <= 0) {
-      throw new BadRequestException('Invalid duration');
-    }
+  if (!asset) {
+    throw new NotFoundException('Asset not available');
+  }
 
-    const pricePerUnit = {
-      [TimeInterval.HOUR]: asset.rentalPriceperhour,
-      [TimeInterval.DAY]: asset.rentalPriceperday,
-      [TimeInterval.WEEK]: asset.rentalPriceperweek,
-      [TimeInterval.MONTH]: asset.rentalPricepermonth,
-      [TimeInterval.YEAR]: asset.rentalPriceperyear,
-    }[timeInterval];
+  /* ---------- DATE HANDLING ---------- */
+  const startUTC = moment.tz(startDate, this.ET_TIMEZONE).utc().toDate();
+  const endUTC = moment.tz(endDate, this.ET_TIMEZONE).utc().toDate();
 
-    if (!pricePerUnit) {
-      throw new BadRequestException('Price not configured');
-    }
+  if (endUTC <= startUTC) {
+    throw new BadRequestException('Invalid date range');
+  }
 
-    const grossAmount = Number(
-      (pricePerUnit * units * numberOfProperty).toFixed(2),
+  /* ---------- PRICING ---------- */
+  const units = this.calculateDuration(startUTC, endUTC, timeInterval);
+  if (units <= 0) {
+    throw new BadRequestException('Invalid duration');
+  }
+
+  const pricePerUnit = {
+    [TimeInterval.HOUR]: asset.rentalPriceperhour,
+    [TimeInterval.DAY]: asset.rentalPriceperday,
+    [TimeInterval.WEEK]: asset.rentalPriceperweek,
+    [TimeInterval.MONTH]: asset.rentalPricepermonth,
+    [TimeInterval.YEAR]: asset.rentalPriceperyear,
+  }[timeInterval];
+
+  if (!pricePerUnit) {
+    throw new BadRequestException('Price not configured');
+  }
+
+  const grossAmount = Number(
+    (pricePerUnit * units * numberOfProperty).toFixed(2),
+  );
+
+  /* ---------- CHAPA HARD LIMIT GUARDS ---------- */
+  if (grossAmount <= 0) {
+    throw new BadRequestException('Invalid payment amount');
+  }
+
+  if (grossAmount > 1_000_000) {
+    throw new BadRequestException(
+      'Amount exceeds Chapa test limit (1,000,000 ETB)',
     );
-    const netAmount = Number((grossAmount / (1 + this.VAT_RATE)).toFixed(2));
-    const vatAmount = Number((grossAmount - netAmount).toFixed(2));
+  }
 
-    /* ---------- PAYMENT METADATA ---------- */
-    const externalPaymentRef = randomUUID();
-    const expiresAt = moment()
-      .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
-      .toDate();
+  const netAmount = Number((grossAmount / (1 + this.VAT_RATE)).toFixed(2));
+  const vatAmount = Number((grossAmount - netAmount).toFixed(2));
 
-    /* ---------- DB TRANSACTION ---------- */
-    const session = await this.bookingModel.db.startSession();
-    session.startTransaction();
+  /* ---------- PAYMENT METADATA ---------- */
+  const externalPaymentRef = randomUUID();
+  const expiresAt = moment()
+    .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
+    .toDate();
 
-    try {
-      const [booking] = await this.bookingModel.create(
-        [
-          {
-            customer: customer._id,
-            merchant: merchant._id,
-            asset: asset._id,
-            startDate: startUTC,
-            endDate: endUTC,
-            timeInterval,
-            numberOfUnits: units,
-            numberOfProperty,
-            pricePerUnit,
-            totalPrice: grossAmount,
-            securityDeposit,
-            status: BookingStatus.PENDING,
-            paymentStatus: PaymentStatus.UNPAID,
-            externalPaymentRef,
-            expiresAt,
-            vatRate: this.VAT_RATE,
-            vatAmount,
-            netAmount,
-            merchantAccountNumber: merchant.acountnumber,
-            snapshot: {
-              merchantName: merchant.businessName || merchant.fullName,
-              merchantEmail: merchant.email,
-              customerName: customer.fullName,
-              customerEmail: customer.email,
-              assetName: asset.name,
-            },
+  /* ==================================================
+     🚨 INITIATE CHAPA FIRST (NO DB TRANSACTION YET)
+     ================================================== */
+  let chapaResponse;
+  try {
+    chapaResponse = await this.chapaService.initializePayment({
+      txRef: externalPaymentRef,
+      amount: grossAmount,
+      customerEmail: customer.email,
+      customerFirstName: customer.fullName,
+      callbackUrl: `${process.env.API_URL}/chapa/webhook`,
+      returnUrl: `${process.env.FRONTEND_URL}/payment/success`,
+    });
+  } catch (err) {
+    this.logger.error('Chapa initialization failed', err);
+    throw new BadRequestException('Unable to initialize payment');
+  }
+
+  if (!chapaResponse?.checkoutUrl) {
+    throw new BadRequestException('Chapa did not return checkout URL');
+  }
+
+  /* ---------- DB TRANSACTION ---------- */
+  const session = await this.bookingModel.db.startSession();
+  session.startTransaction();
+
+  try {
+    const [booking] = await this.bookingModel.create(
+      [
+        {
+          customer: customer._id,
+          merchant: merchant._id,
+          asset: asset._id,
+          startDate: startUTC,
+          endDate: endUTC,
+          timeInterval,
+          numberOfUnits: units,
+          numberOfProperty,
+          pricePerUnit,
+          totalPrice: grossAmount,
+          securityDeposit,
+          status: BookingStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+          externalPaymentRef,
+          expiresAt,
+          vatRate: this.VAT_RATE,
+          vatAmount,
+          netAmount,
+          merchantAccountNumber: merchant.acountnumber,
+          snapshot: {
+            merchantName: merchant.businessName || merchant.fullName,
+            merchantEmail: merchant.email,
+            customerName: customer.fullName,
+            customerEmail: customer.email,
+            assetName: asset.name,
           },
-        ],
-        { session },
-      );
+        },
+      ],
+      { session },
+    );
 
-      await session.commitTransaction();
-      session.endSession();
+    await session.commitTransaction();
+    session.endSession();
 
-      /* ---------- INITIATE CHAPA ---------- */
-      const chapa = await this.chapaService.initializePayment({
-        txRef: externalPaymentRef,
-        amount: grossAmount,
-        customerEmail: customer.email,
-        customerFirstName: customer.fullName,
-        callbackUrl: `${process.env.API_URL}/chapa/webhook`,
-        returnUrl: `${process.env.FRONTEND_URL}/payment/success`,
-      });
-
-      
-  /* ===============================
-       🔔 NOTIFY
-    =============================== */
+    /* ---------- NOTIFY (AFTER COMMIT) ---------- */
     await this.notifyBookingCreatedPaymentRequired(
       booking,
       customer,
       merchant,
       asset,
     );
-      /* ---------- RESPONSE ---------- */
-      return {
-        bookingId: booking._id,
-        paymentReference: externalPaymentRef,
-        grossAmount,
-        netAmount,
-        vatAmount,
-        currency: 'ETB',
-        expiresAt,
-        checkoutUrl: chapa.checkoutUrl, // 👈 FRONTEND REDIRECTS HERE
-      };
-    } catch (err) {
-      await session.abortTransaction();
-      session.endSession();
-      this.logger.error(err);
-      throw new InternalServerErrorException('Booking creation failed');
-    }
+
+    /* ---------- RESPONSE ---------- */
+    return {
+      bookingId: booking._id,
+      paymentReference: externalPaymentRef,
+      grossAmount,
+      netAmount,
+      vatAmount,
+      currency: 'ETB',
+      expiresAt,
+      checkoutUrl: chapaResponse.checkoutUrl,
+      message: 'Redirecting to Chapa checkout...',
+    };
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    this.logger.error(err);
+    throw new InternalServerErrorException('Booking creation failed');
   }
+}
 
 // ===================================================
 // Chapa Webhook -> update payment status (IDEMPOTENT)
