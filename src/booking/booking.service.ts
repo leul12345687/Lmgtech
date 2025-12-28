@@ -169,7 +169,6 @@ export class BookingService {
       customerEmail: customer.email,
       customerFirstName: customer.fullName,
       callbackUrl: `${process.env.API_URL}/chapa/webhook`,
-      returnUrl: `${process.env.FRONTEND_URL}/payment/success`,
     });
   } catch (err) {
     this.logger.error('Chapa initialization failed', err);

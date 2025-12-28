@@ -45,7 +45,6 @@ export class ChapaService {
     customerLastName?: string;
     customerPhone?: string;
     callbackUrl: string;
-    returnUrl: string;
     description?: string;
   }): Promise<{ checkoutUrl: string }> {
     const {
@@ -57,7 +56,7 @@ export class ChapaService {
       customerLastName = '',
       customerPhone,
       callbackUrl,
-      returnUrl,
+     
       description,
     } = params;
 
@@ -86,7 +85,7 @@ export class ChapaService {
         phone_number: customerPhone,
 
         callback_url: callbackUrl,
-        return_url: returnUrl,
+       
 
         customization: {
           title: 'Booking Payment',
