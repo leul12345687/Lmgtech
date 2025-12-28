@@ -168,6 +168,7 @@ export class BookingService {
       amount: grossAmount,
       customerEmail: customer.email,
       customerFirstName: customer.fullName,
+       returnUrl: `${process.env.API_URL}/payments/receipt/${externalPaymentRef}`,
       callbackUrl: `${process.env.API_URL}/chapa/webhook`,
     });
   } catch (err) {
