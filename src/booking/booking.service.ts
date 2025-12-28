@@ -168,7 +168,6 @@ export class BookingService {
       amount: grossAmount,
       customerEmail: customer.email,
       customerFirstName: customer.fullName,
-       returnUrl: `${process.env.API_URL}/payments/receipt/${externalPaymentRef}`,
       callbackUrl: `${process.env.API_URL}/chapa/webhook`,
     });
   } catch (err) {
@@ -248,10 +247,13 @@ export class BookingService {
     this.logger.error(err);
     throw new InternalServerErrorException('Booking creation failed');
   }
-}// ===================================================
+}
+// ===================================================
 // Chapa Webhook → Update Booking Payment Status
 // ===================================================
 public async handleChapaWebhook(payload: any) {
+  this.logger.warn('🔔 CHAPA WEBHOOK RECEIVED', JSON.stringify(payload));
+
   const reference =
     payload?.tx_ref ||
     payload?.reference ||
@@ -259,8 +261,10 @@ public async handleChapaWebhook(payload: any) {
     payload?.data?.reference ||
     payload?.meta?.bookingRef;
 
+  // 🚨 NEVER THROW IN WEBHOOKS
   if (!reference) {
-    throw new BadRequestException('Missing tx_ref in webhook');
+    this.logger.warn('⚠️ Webhook missing tx_ref');
+    return { ok: true };
   }
 
   const booking = await this.bookingModel
@@ -269,7 +273,7 @@ public async handleChapaWebhook(payload: any) {
 
   if (!booking) {
     this.logger.warn(`⚠️ Webhook for unknown ref: ${reference}`);
-    return { ok: true }; // Safe for retries
+    return { ok: true };
   }
 
   // 🔁 IDEMPOTENCY
@@ -278,32 +282,39 @@ public async handleChapaWebhook(payload: any) {
     return { ok: true };
   }
 
-  // 🔐 VERIFY WITH CHAPA
+  // 🔐 VERIFY WITH CHAPA (SOURCE OF TRUTH)
   const verification = await this.chapaService.verifyTransaction(reference);
 
   booking.webhookPayload = payload;
   booking.paymentVerification = verification.raw;
 
-  if (verification.status !== 'success') {
-    booking.paymentStatus = PaymentStatus.PENDING;
+  // ⏳ PENDING → DO NOTHING
+  if (verification.status === 'pending') {
+    return { ok: true };
+  }
+
+  // ❌ FAILED PAYMENT
+  if (verification.status === 'failed') {
+    booking.paymentStatus = PaymentStatus.FAILED;
     await booking.save();
     return { ok: true };
   }
 
-  // 💰 AMOUNT VALIDATION (ROUND TO 2 DECIMALS)
-  const expectedAmount = Math.round(Number(booking.totalPrice) * 100) / 100;
-  const receivedAmount = Math.round(Number(verification.amount) * 100) / 100;
+  // 💰 AMOUNT VALIDATION (SAFE FLOAT COMPARE)
+  const expectedAmount = Number(booking.totalPrice);
+  const receivedAmount = Number(verification.amount);
 
-  if (expectedAmount !== receivedAmount) {
+  if (!this.chapaService.amountsMatch(expectedAmount, receivedAmount)) {
     this.logger.error(
       `❌ Amount mismatch for ${reference}: expected ${expectedAmount}, got ${receivedAmount}`,
     );
+
     booking.paymentStatus = PaymentStatus.MISMATCH;
     await booking.save();
-    return { ok: false };
+    return { ok: true };
   }
 
-  // ✅ MARK AS PAID
+  // ✅ MARK AS PAID (FINAL STATE)
   booking.paymentStatus = PaymentStatus.PAID;
   booking.status = BookingStatus.CONFIRMED;
   booking.transactionId = verification.transactionId;
@@ -314,7 +325,7 @@ public async handleChapaWebhook(payload: any) {
 
   await booking.save();
 
-  // 🔔 Notify merchant / customer
+  // 🔔 Notify AFTER commit
   await this.notifyMerchantPaymentReceived(booking);
 
   this.logger.log(

@@ -70,23 +70,4 @@ export class BookingController {
     return bookingResult;
   }
 
-  // ===================================================
-  //  🔔 Bank / Chapa Webhook Endpoint
-  // ===================================================
-  // PUBLIC endpoint for Chapa webhook
-  @Post('/chapa/webhook')
-  @HttpCode(HttpStatus.OK)
-  async handleChapaWebhook(@Body() payload: any) {
-    if (!payload) {
-      return { ok: true };
-    }
-
-    try {
-      await this.bookingService.handleChapaWebhook(payload); // Only payload, no req
-      return { ok: true };
-    } catch (error) {
-      console.error('❌ Webhook processing error:', error?.message || error);
-      return { ok: false };
-    }
-  }
 }
