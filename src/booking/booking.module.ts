@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module,Global } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -11,7 +11,7 @@ import { PropertyModule } from '../property/property.module';
 import { User, UserSchema } from '../schema/user.schema';
 
 import { CustomerAuthModule } from 'src/customer/customerAuthMoodule';
-
+@Global() 
 @Module({
   imports: [
     // ✅ Register Mongo Schemas
@@ -20,7 +20,7 @@ import { CustomerAuthModule } from 'src/customer/customerAuthMoodule';
       { name: User.name, schema: UserSchema },
     ]),CustomerAuthModule,
 
-    // ✅ JWT configuration (same pattern as CustomerModule)
+    
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
