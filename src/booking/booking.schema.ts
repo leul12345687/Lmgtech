@@ -17,6 +17,7 @@ export enum PaymentStatus {
   UNPAID = 'UNPAID',
   PENDING = 'PENDING',
   PAID = 'PAID',
+  MISMATCH="MISMATCH",
   PENDING_REVIEW = 'PENDING_REVIEW',
   EXPIRED = 'EXPIRED',
 }
@@ -71,6 +72,8 @@ export class Booking {
   @Prop()
   numberOfUnits?: number;
 
+  @Prop({ type: Object })
+  paymentVerification?: any;
   // ============================
   // PRICING
   // ============================

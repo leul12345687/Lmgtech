@@ -20,6 +20,7 @@ import { ProfileModule  } from './gettingandupdatingprofile/gettingandupdatingpr
 import { BankingService } from './banking/banking.service';
 import { BankingController } from './banking/banking.controller';
 import { BankingModule } from './banking/banking.module';
+import { ChapaModule } from './chapa/chapa.module';
 
 import * as path from 'path';
 
@@ -76,9 +77,10 @@ import * as path from 'path';
     SmsModule,
     ScheduleModule.forRoot(),
     ProfileModule,
-    BankingModule ,   // ✅ VERY IMPORTANT
+    BankingModule,
+    ChapaModule ,   // ✅ VERY IMPORTANT
   ],
-  controllers: [AppController, BankingController, ],
-  providers: [AppService, BankingService, ],
+  controllers: [AppController, BankingController,  ],
+  providers: [AppService, BankingService,  ],
 })
 export class AppModule {}

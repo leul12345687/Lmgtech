@@ -1,4 +1,3 @@
-// src/booking/booking.service.ts
 import {
   Injectable,
   BadRequestException,
@@ -20,7 +19,7 @@ import {
   TimeInterval,
 } from './booking.schema';
 import { PropertyService } from '../property/property.service';
-import { AssetDocument, AssetStatus,Asset } from '../property/property.schema';
+import { AssetDocument, AssetStatus, Asset } from '../property/property.schema';
 import {
   differenceInHours,
   differenceInDays,
@@ -31,268 +30,173 @@ import {
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { MailService } from '../notifications/mail.service';
 import { SmsService } from '../notifications/sms.service';
+import { ChapaService } from '../chapa/chapa.service';
+
 export type BookingWithUsers = Booking & {
   customer: UserDocument;
   merchant: UserDocument;
 };
-// 👇 ADD THIS
+
 export type BookingWithUsersAndAsset = Booking & {
   customer: User;
   asset: Asset;
 };
+// src/booking/booking.service.ts
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
   private readonly ET_TIMEZONE = 'Africa/Addis_Ababa';
 
-  // config — adjust as needed
-  private readonly PAYMENT_EXPIRE_HOURS = 24; // X hours to expire unpaid ref
-  private readonly VAT_RATE = 0.15; // 15% VAT (VAT-included pricing model)
-  private readonly AMOUNT_TOLERANCE = 0.5; // ETB tolerance for webhook amount comparison
+  private readonly PAYMENT_EXPIRE_HOURS = 24;
+  private readonly VAT_RATE = 0.15;
 
+  private readonly AMOUNT_TOLERANCE = 0.5; // <--- here
   constructor(
-    @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Booking.name)
+    private readonly bookingModel: Model<BookingDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly propertyService: PropertyService,
     private readonly mailService: MailService,
     private readonly smsService: SmsService,
+    private readonly chapaService: ChapaService,
   ) {}
 
   // ===================================================
-  // CREATE BOOKING -> generate payment ref -> return info
-  // VAT included: totalPriceGross is what customer pays (stored in totalPrice)
-  // netAmount = gross / (1 + VAT_RATE)
-  // vatAmount = gross - netAmount
+  // CREATE BOOKING → INITIATE CHAPA → RETURN CHECKOUT URL
   // ===================================================
- public async createBookingForPayment(
-  customerId: Types.ObjectId,
-  assetName: string,
-  merchantEmail: string,
-  startDate: string | Date,
-  endDate: string | Date,
-  timeInterval: TimeInterval,
-  numberOfProperty: number,
-  securityDeposit = 0,
-  lang = 'en',
-) {
-  /* ===============================
-     1️⃣ BASIC VALIDATION
-  =============================== */
-  if (
-    !customerId ||
-    !assetName ||
-    !merchantEmail ||
-    !startDate ||
-    !endDate ||
-    !timeInterval ||
-    !numberOfProperty ||
-    numberOfProperty <= 0
+  public async createBookingForPayment(
+    customerId: Types.ObjectId,
+    assetName: string,
+    merchantEmail: string,
+    startDate: string | Date,
+    endDate: string | Date,
+    timeInterval: TimeInterval,
+    numberOfProperty: number,
+    securityDeposit = 0,
+    lang = 'en',
   ) {
-    throw new BadRequestException('Missing or invalid booking fields');
-  }
-
-  /* ===============================
-     2️⃣ LOAD MERCHANT & CUSTOMER
-  =============================== */
-  const merchant = await this.userModel.findOne({
-    email: merchantEmail,
-    role: UserRole.MERCHANT,
-  });
-
-  if (!merchant) {
-    throw new NotFoundException('Merchant not found');
-  }
-
-  const customer = await this.userModel.findById(customerId);
-  if (!customer) {
-    throw new NotFoundException('Customer not found');
-  }
-
-  /* ===============================
-     3️⃣ MERCHANT BANK ACCOUNT (CBE)
-     ✅ SINGLE SOURCE OF TRUTH
-  =============================== */
-  if (!merchant.acountnumber) {
-    throw new BadRequestException(
-      'Merchant CBE account number is not configured',
-    );
-  }
-
-  const merchantAccountNumber = merchant.acountnumber.toString();
-
-  /* ===============================
-     4️⃣ LOAD ASSET
-  =============================== */
-  const assetModel =
-    this.propertyService['assetModel'] as Model<AssetDocument>;
-
-  const asset = await assetModel.findOne({
-    name: assetName,
-    merchant: merchant._id,
-  });
-
-  if (!asset) {
-    throw new NotFoundException('Asset not found');
-  }
-
-  if (asset.status !== AssetStatus.AVAILABLE) {
-    throw new BadRequestException('Asset is not available');
-  }
-
-  /* ===============================
-     5️⃣ DATE HANDLING (ET → UTC)
-  =============================== */
-  let startUTC: Date;
-  let endUTC: Date;
-
-  try {
-    startUTC = moment
-      .tz(startDate, this.ET_TIMEZONE)
-      .utc()
-      .toDate();
-
-    endUTC = moment
-      .tz(endDate, this.ET_TIMEZONE)
-      .utc()
-      .toDate();
-  } catch {
-    throw new BadRequestException('Invalid date format');
-  }
-
-  if (endUTC <= startUTC) {
-    throw new BadRequestException(
-      'End date must be after start date',
-    );
-  }
-
-  /* ===============================
-     6️⃣ DURATION & UNIT PRICE
-  =============================== */
-  const numberOfUnits = this.calculateDuration(
-    startUTC,
-    endUTC,
-    timeInterval,
-  );
-
-  if (numberOfUnits <= 0) {
-    throw new BadRequestException('Invalid booking duration');
-  }
-
-  const priceMap: Record<TimeInterval, number | undefined> = {
-    [TimeInterval.HOUR]: asset.rentalPriceperhour,
-    [TimeInterval.DAY]: asset.rentalPriceperday,
-    [TimeInterval.WEEK]: asset.rentalPriceperweek,
-    [TimeInterval.MONTH]: asset.rentalPricepermonth,
-    [TimeInterval.YEAR]: asset.rentalPriceperyear,
-  };
-
-  const pricePerUnit = priceMap[timeInterval];
-
-  if (!pricePerUnit || pricePerUnit <= 0) {
-    throw new BadRequestException(
-      'Price not configured for selected time interval',
-    );
-  }
-
-  /* ===============================
-     7️⃣ PRICE CALCULATION (VAT INCLUDED)
-  =============================== */
-  const totalPriceGross = Number(
-    (pricePerUnit * numberOfUnits * numberOfProperty).toFixed(2),
-  );
-
-  const netAmount = Number(
-    (totalPriceGross / (1 + this.VAT_RATE)).toFixed(2),
-  );
-
-  const vatAmount = Number(
-    (totalPriceGross - netAmount).toFixed(2),
-  );
-
-  /* ===============================
-     8️⃣ PAYMENT REFERENCE & EXPIRY
-  =============================== */
-  const externalPaymentRef = this.generateReference();
-
-  const expiresAt = moment()
-    .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
-    .toDate();
-
-  /* ===============================
-     9️⃣ DB TRANSACTION
-  =============================== */
-  const session = await this.bookingModel.db.startSession();
-  session.startTransaction();
-
-  try {
-    /* ---- Availability Check ---- */
-    const overlapping = await this.bookingModel
-      .find({
-        asset: asset._id,
-        status: {
-          $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED,BookingStatus.COMPLETED],
-        },
-        startDate: { $lte: endUTC },
-        endDate: { $gte: startUTC },
-      })
-      .session(session);
-
-    const alreadyBooked = overlapping.reduce(
-      (sum, b) => sum + (b.numberOfProperty || 0),
-      0,
-    );
-
-    const available =
-      (asset.numberOfProperty || 0) - alreadyBooked;
-
-    if (available < numberOfProperty) {
-      throw new BadRequestException(
-        'Not enough units available for selected dates',
-      );
+    /* ---------- VALIDATION ---------- */
+    if (!customerId || !assetName || !merchantEmail || numberOfProperty <= 0) {
+      throw new BadRequestException('Invalid booking data');
     }
 
-    /* ---- Create Booking ---- */
-    const [booking] = await this.bookingModel.create(
-      [
-        {
-          customer: customer._id,
-          merchant: merchant._id,
-          asset: asset._id,
-          startDate: startUTC,
-          endDate: endUTC,
-          timeInterval,
-          numberOfProperty,
-          numberOfUnits,
-          pricePerUnit,
-          totalPrice: totalPriceGross,
-          securityDeposit,
-          status: BookingStatus.PENDING,
-          paymentStatus: PaymentStatus.UNPAID,
-          externalPaymentRef,
-          expiresAt,
-          vatRate: this.VAT_RATE,
-          vatAmount,
-          netAmount,
-          merchantAccountNumber,
-          snapshot: {
-            merchantName:
-              merchant.businessName || merchant.fullName,
-            merchantEmail: merchant.email,
-            merchantPhone: merchant.phonenumber,
-            customerName: customer.fullName,
-            customerEmail: customer.email,
-            customerPhone: customer.phonenumber,
-            assetName: asset.name,
-          },
-        },
-      ],
-      { session },
+    /* ---------- LOAD USERS ---------- */
+    const merchant = await this.userModel.findOne({
+      email: merchantEmail,
+      role: UserRole.MERCHANT,
+    });
+    if (!merchant || !merchant.acountnumber) {
+      throw new BadRequestException('Merchant not properly configured');
+    }
+
+    const customer = await this.userModel.findById(customerId);
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    /* ---------- LOAD ASSET ---------- */
+    const assetModel = this.propertyService['assetModel'] as Model<AssetDocument>;
+    const asset = await assetModel.findOne({
+      name: assetName,
+      merchant: merchant._id,
+      status: AssetStatus.AVAILABLE,
+    });
+    if (!asset) {
+      throw new NotFoundException('Asset not available');
+    }
+
+    /* ---------- DATE HANDLING ---------- */
+    const startUTC = moment.tz(startDate, this.ET_TIMEZONE).utc().toDate();
+    const endUTC = moment.tz(endDate, this.ET_TIMEZONE).utc().toDate();
+    if (endUTC <= startUTC) {
+      throw new BadRequestException('Invalid date range');
+    }
+
+    /* ---------- PRICING ---------- */
+    const units = this.calculateDuration(startUTC, endUTC, timeInterval);
+    if (units <= 0) {
+      throw new BadRequestException('Invalid duration');
+    }
+
+    const pricePerUnit = {
+      [TimeInterval.HOUR]: asset.rentalPriceperhour,
+      [TimeInterval.DAY]: asset.rentalPriceperday,
+      [TimeInterval.WEEK]: asset.rentalPriceperweek,
+      [TimeInterval.MONTH]: asset.rentalPricepermonth,
+      [TimeInterval.YEAR]: asset.rentalPriceperyear,
+    }[timeInterval];
+
+    if (!pricePerUnit) {
+      throw new BadRequestException('Price not configured');
+    }
+
+    const grossAmount = Number(
+      (pricePerUnit * units * numberOfProperty).toFixed(2),
     );
+    const netAmount = Number((grossAmount / (1 + this.VAT_RATE)).toFixed(2));
+    const vatAmount = Number((grossAmount - netAmount).toFixed(2));
 
-    await session.commitTransaction();
-    session.endSession();
+    /* ---------- PAYMENT METADATA ---------- */
+    const externalPaymentRef = randomUUID();
+    const expiresAt = moment()
+      .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
+      .toDate();
 
-    /* ===============================
+    /* ---------- DB TRANSACTION ---------- */
+    const session = await this.bookingModel.db.startSession();
+    session.startTransaction();
+
+    try {
+      const [booking] = await this.bookingModel.create(
+        [
+          {
+            customer: customer._id,
+            merchant: merchant._id,
+            asset: asset._id,
+            startDate: startUTC,
+            endDate: endUTC,
+            timeInterval,
+            numberOfUnits: units,
+            numberOfProperty,
+            pricePerUnit,
+            totalPrice: grossAmount,
+            securityDeposit,
+            status: BookingStatus.PENDING,
+            paymentStatus: PaymentStatus.UNPAID,
+            externalPaymentRef,
+            expiresAt,
+            vatRate: this.VAT_RATE,
+            vatAmount,
+            netAmount,
+            merchantAccountNumber: merchant.acountnumber,
+            snapshot: {
+              merchantName: merchant.businessName || merchant.fullName,
+              merchantEmail: merchant.email,
+              customerName: customer.fullName,
+              customerEmail: customer.email,
+              assetName: asset.name,
+            },
+          },
+        ],
+        { session },
+      );
+
+      await session.commitTransaction();
+      session.endSession();
+
+      /* ---------- INITIATE CHAPA ---------- */
+      const chapa = await this.chapaService.initializePayment({
+        txRef: externalPaymentRef,
+        amount: grossAmount,
+        customerEmail: customer.email,
+        customerFirstName: customer.fullName,
+        callbackUrl: `${process.env.API_URL}/chapa/webhook`,
+        returnUrl: `${process.env.FRONTEND_URL}/payment/success`,
+      });
+
+      
+  /* ===============================
        🔔 NOTIFY
     =============================== */
     await this.notifyBookingCreatedPaymentRequired(
@@ -301,98 +205,125 @@ export class BookingService {
       merchant,
       asset,
     );
-
-    /* ===============================
-       🔟 RESPONSE TO FRONTEND
-       ✅ THIS FIXES "— ETB"
-    =============================== */
-    return {
-      paymentReference: externalPaymentRef,
-      totalPrice: totalPriceGross,
-      netAmount,
-      vatAmount,
-      vatRate: this.VAT_RATE,
-      currency: 'ETB',
-      accountNumber: merchantAccountNumber,
-      expiresAt,
-      message:
-        'Booking created. Pay the gross amount (VAT included) to the account number using the reference before expiry.',
-    };
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-
-    this.logger.error(
-      'createBookingForPayment failed',
-      error?.stack || error,
-    );
-
-    throw error instanceof BadRequestException
-      ? error
-      : new InternalServerErrorException(
-          'Failed to create booking',
-        );
+      /* ---------- RESPONSE ---------- */
+      return {
+        bookingId: booking._id,
+        paymentReference: externalPaymentRef,
+        grossAmount,
+        netAmount,
+        vatAmount,
+        currency: 'ETB',
+        expiresAt,
+        checkoutUrl: chapa.checkoutUrl, // 👈 FRONTEND REDIRECTS HERE
+      };
+    } catch (err) {
+      await session.abortTransaction();
+      session.endSession();
+      this.logger.error(err);
+      throw new InternalServerErrorException('Booking creation failed');
+    }
   }
-}
 
+// ===================================================
+// Chapa Webhook -> update payment status (IDEMPOTENT)
+// ===================================================
+public async handleChapaWebhook(payload: any) {
+  const reference =
+    payload?.tx_ref ||
+    payload?.reference ||
+    payload?.data?.tx_ref;
 
+  if (!reference) {
+    throw new BadRequestException('Missing tx_ref in webhook');
+  }
 
-  // ===================================================
-  // BANK WEBHOOK -> update payment status (idempotent)
-  // Expect payload shape { reference, amount, transactionId, status, paidAt, payerPhone }
- public async handleBankWebhook(payload: any) {
-  const { reference, amount, transactionId, status, paidAt } = payload || {};
-  if (!reference) throw new BadRequestException('Missing payment reference in webhook');
-
+  // ---------------------------------------------------
+  // 1️⃣ Find booking
+  // ---------------------------------------------------
   const booking = await this.bookingModel
     .findOne({ externalPaymentRef: reference })
     .populate('merchant customer asset');
+
   if (!booking) {
-    this.logger.warn(`Unknown webhook reference: ${reference}`);
-    throw new NotFoundException('Reference not found');
+    this.logger.warn(`⚠️ Webhook received for unknown ref: ${reference}`);
+    return { ok: false }; // safe for retries
   }
 
-  // idempotent: if already PAID, ignore (or update if different tx)
+  // ---------------------------------------------------
+  // 2️⃣ IDEMPOTENCY: already PAID
+  // ---------------------------------------------------
   if (booking.paymentStatus === PaymentStatus.PAID) {
-    this.logger.log(`Webhook for already-paid booking ${booking._id} ignored`);
+    this.logger.log(`🔁 Webhook ignored — booking ${booking._id} already PAID`);
     return { ok: true };
   }
 
-  // amount validation (tolerance)
-  const receivedAmount = Number(amount);
-  const expected = Number(booking.totalPrice);
-  if (Math.abs(receivedAmount - expected) > this.AMOUNT_TOLERANCE) {
-    this.logger.warn(`Amount mismatch for ${reference}: expected ${expected} got ${receivedAmount}`);
-    booking.rawWebhook = payload;
+  // ---------------------------------------------------
+  // 3️⃣ VERIFY WITH CHAPA (DO NOT TRUST WEBHOOK)
+  // ---------------------------------------------------
+  const verification = await this.chapaService.verifyTransaction(reference);
+
+  // Store raw webhook + verification for audit
+  booking.webhookPayload = payload;
+  booking.paymentVerification = verification.raw;
+
+  // ---------------------------------------------------
+  // 4️⃣ HANDLE STATUS
+  // ---------------------------------------------------
+  if (verification.status !== 'success') {
+    this.logger.warn(
+      `⏳ Payment not successful yet for ${reference}, status=${verification.status}`,
+    );
+
+    booking.paymentStatus = PaymentStatus.PENDING;
     await booking.save();
+
+    return { ok: true };
+  }
+
+  // ---------------------------------------------------
+  // 5️⃣ AMOUNT VALIDATION (CRITICAL)
+  // ---------------------------------------------------
+  const expectedAmount = Number(booking.totalPrice);
+  const receivedAmount = Number(verification.amount);
+
+  if (receivedAmount !== expectedAmount) {
+    this.logger.error(
+      `❌ Amount mismatch for ${reference}: expected ${expectedAmount}, got ${receivedAmount}`,
+    );
+
+    booking.paymentStatus = PaymentStatus.MISMATCH;
+    await booking.save();
+
     throw new BadRequestException('Amount mismatch — manual review required');
   }
 
-  // mark payment paid, record transaction
+  // ---------------------------------------------------
+  // 6️⃣ MARK BOOKING AS PAID
+  // ---------------------------------------------------
   booking.paymentStatus = PaymentStatus.PAID;
-  booking.paymentApprovedAt = paidAt ? new Date(paidAt) : new Date();
-  booking.transactionId = transactionId || booking.transactionId;
-  booking.webhookPayload = payload;
+  booking.status = BookingStatus.CONFIRMED;
 
-  // ✅ clear expiry safely
+  booking.transactionId = verification.transactionId;
+  booking.paymentApprovedAt = verification.paidAt
+    ? new Date(verification.paidAt)
+    : new Date();
+
+  // Payment expiry no longer needed
   booking.expiresAt = null;
-
-  // ✅ use booking's own dates
-  const startUTC = moment.tz(booking.startDate, this.ET_TIMEZONE).utc().toDate();
-  const endUTC = moment.tz(booking.endDate, this.ET_TIMEZONE).utc().toDate();
-
-  // optional: if you want to set an expiry for some reason
-   booking.expiresAt = startUTC; // e.g., start date as the new expiry
 
   await booking.save();
 
-  // notify merchant that payment is received
+  // ---------------------------------------------------
+  // 7️⃣ NOTIFY MERCHANT
+  // ---------------------------------------------------
   await this.notifyMerchantPaymentReceived(booking);
 
-  this.logger.log(`Payment recorded for booking ${booking._id} (ref ${reference})`);
+  this.logger.log(
+    `✅ Payment confirmed for booking ${booking._id} (ref: ${reference})`,
+  );
+
   return { ok: true };
 }
-
 
   // ===================================================
   // Merchant confirms booking after verifying payment
@@ -823,62 +754,96 @@ private async notifyCustomerBookingConfirmed(booking: BookingDocument) {
       this.logger.warn(`Email to customer failed: ${err?.message}`);
     }
   }
-}
-  // ============================
-  // Bank Reconciliation (every 5 minutes)
-  // ============================
-  @Cron('*/5 * * * *') // runs every 5 minutes
-  private async reconcileBankPayments() {
-    this.logger.log('⏳ Running bank reconciliation...');
+}// ============================
+// Bank Reconciliation (every 5 minutes)
+// ============================
+@Cron('*/5 * * * *')
+private async reconcileBankPayments() {
+  this.logger.log('⏳ Running bank reconciliation...');
 
-    try {
-      // 1️⃣ Fetch all unpaid bookings
-      const unpaidBookings = await this.bookingModel.find({
-        paymentStatus: PaymentStatus.UNPAID,
-        expiresAt: { $gte: new Date() }, // not expired yet
-      }).lean();
+  try {
+    // 1️⃣ Fetch unpaid & active bookings
+    const unpaidBookings = await this.bookingModel.find({
+      paymentStatus: PaymentStatus.UNPAID,
+      expiresAt: { $gte: new Date() },
+    }).populate('merchant customer asset');
 
-      if (!unpaidBookings.length) {
-        this.logger.log('✔ No unpaid bookings to reconcile.');
-        return;
-      }
-
-      // 2️⃣ Fetch bank transactions from CBE API or CSV webhook
-      const bankTransactions = await this.fetchCbeTransactions();
-      if (!bankTransactions || !bankTransactions.length) {
-        this.logger.warn('⚠ No transactions fetched from bank');
-        return;
-      }
-
-      // 3️⃣ Match transactions with bookings by reference & amount
-      for (const booking of unpaidBookings) {
-        const match = bankTransactions.find(
-          tx =>
-            tx.reference === booking.externalPaymentRef &&
-            Math.abs(Number(tx.amount) - Number(booking.totalPrice)) <= this.AMOUNT_TOLERANCE &&
-            tx.beneficiaryAccount === booking.merchantAccountNumber
-        );
-
-        if (match) {
-          this.logger.log(`✅ Reconciled booking REF=${booking.externalPaymentRef} via bank`);
-
-          // Update booking as paid
-          booking.paymentStatus = PaymentStatus.PAID;
-          booking.paymentApprovedAt = match.paidAt ? new Date(match.paidAt) : new Date();
-          booking.transactionId = match.transactionId;
-          booking.webhookPayload = match;
-
-          // save changes
-          await this.bookingModel.updateOne({ _id: booking._id }, booking);
-
-          // notify merchant
-          await this.notifyMerchantPaymentReceived(booking as any);
-        }
-      }
-    } catch (err) {
-      this.logger.error('🔥 Bank reconciliation failed', err?.message);
+    if (!unpaidBookings.length) {
+      this.logger.log('✔ No unpaid bookings to reconcile.');
+      return;
     }
+
+    // 2️⃣ Fetch bank transactions
+    const bankTransactions = await this.fetchCbeTransactions(); // implement fetching logic
+    if (!bankTransactions?.length) {
+      this.logger.warn('⚠ No transactions fetched from bank');
+      return;
+    }
+
+    // 3️⃣ Index transactions by payment reference
+    const txMap = new Map<string, any>();
+    for (const tx of bankTransactions) {
+      if (tx.reference) {
+        txMap.set(tx.reference, tx);
+      }
+    }
+
+    // 4️⃣ Reconcile bookings
+    for (const booking of unpaidBookings) {
+      if (!booking.externalPaymentRef) continue; // safety guard
+
+      const tx = txMap.get(booking.externalPaymentRef);
+      if (!tx) continue;
+
+      // Amount check with tolerance
+      const amountMatches =
+        Math.abs(Number(tx.amount) - Number(booking.totalPrice)) <= this.AMOUNT_TOLERANCE;
+
+      // Merchant account check
+      const accountMatches =
+        tx.beneficiaryAccount === booking.merchantAccountNumber;
+
+      if (!amountMatches || !accountMatches) continue;
+
+      // 5️⃣ Idempotent update
+      const updated = await this.bookingModel.findOneAndUpdate(
+        {
+          _id: booking._id,
+          paymentStatus: PaymentStatus.UNPAID,
+        },
+        {
+          $set: {
+            paymentStatus: PaymentStatus.PAID,
+            paymentApprovedAt: tx.paidAt ? new Date(tx.paidAt) : new Date(),
+            transactionId: tx.transactionId,
+            reconciliationPayload: tx, // store full transaction for audit
+            expiresAt: null,
+          },
+        },
+        { new: true },
+      ).populate('merchant customer asset');
+
+      if (!updated) {
+        this.logger.log(`ℹ Booking ${booking._id} already reconciled`);
+        continue;
+      }
+
+      this.logger.log(`✅ Reconciled booking REF=${booking.externalPaymentRef}`);
+
+      // 6️⃣ Notify merchant (non-blocking)
+      try {
+        await this.notifyMerchantPaymentReceived(updated);
+      } catch (notifyErr) {
+        this.logger.error(
+          `⚠ Payment reconciled but merchant notification failed for booking ${updated._id}`,
+          notifyErr?.message,
+        );
+      }
+    }
+  } catch (err) {
+    this.logger.error('🔥 Bank reconciliation failed', err?.message);
   }
+}
 
   // ============================
   // Fetch transactions from CBE
