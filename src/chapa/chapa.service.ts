@@ -15,7 +15,7 @@ export class ChapaService {
   private readonly secretKey = process.env.CHAPA_SECRET_KEY!;
   private readonly http: AxiosInstance;
 
-  // Chapa test limit
+  // Chapa TEST MODE limit
   private readonly MAX_TEST_AMOUNT = 1_000_000;
 
   constructor() {
@@ -34,7 +34,7 @@ export class ChapaService {
   }
 
   // ===================================================
-  // Initialize payment → returns checkout_url
+  // INITIALIZE PAYMENT
   // ===================================================
   async initializePayment(params: {
     txRef: string;
@@ -65,17 +65,14 @@ export class ChapaService {
       throw new BadRequestException('Invalid Chapa parameters');
     }
 
-    // 🚨 Chapa test limit guard
     if (amount > this.MAX_TEST_AMOUNT) {
       throw new BadRequestException(
         `Amount exceeds Chapa test limit (${this.MAX_TEST_AMOUNT} ETB)`,
       );
     }
 
-    // 🔐 Description max 50 chars
     const safeDescription =
-      description?.slice(0, 50) ??
-      `Booking payment`.slice(0, 50);
+      description?.slice(0, 50) ?? 'Booking payment';
 
     try {
       const res = await this.http.post('/initialize', {
@@ -102,9 +99,8 @@ export class ChapaService {
       });
 
       const checkoutUrl = res?.data?.data?.checkout_url;
-
       if (!checkoutUrl) {
-        this.logger.error('Invalid Chapa response', res?.data);
+        this.logger.error('Invalid Chapa initialize response', res?.data);
         throw new InternalServerErrorException('Invalid Chapa response');
       }
 
@@ -121,7 +117,7 @@ export class ChapaService {
   }
 
   // ===================================================
-  // Verify payment
+  // VERIFY PAYMENT (SOURCE OF TRUTH)
   // ===================================================
   async verifyTransaction(txRef: string) {
     if (!txRef) {
@@ -139,7 +135,7 @@ export class ChapaService {
       }
 
       return {
-        status: data.status,
+        status: data.status, // success | pending | failed
         amount: Number(data.amount),
         currency: data.currency,
         transactionId: data.id,

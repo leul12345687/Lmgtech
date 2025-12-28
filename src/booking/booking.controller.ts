@@ -77,19 +77,24 @@ export class BookingController {
   // ===================================================
   // No authentication needed (webhook is public, verify via secret or IP in production)
   @Post('webhook')
-  @HttpCode(HttpStatus.OK)
-  async handleWebhook(@Body() payload: any) {
-    if (!payload) {
-      throw new BadRequestException('Empty webhook payload');
-    }
-
-    try {
-      // Call the BookingService handler
-      const result = await this.bookingService.handleChapaWebhook(payload);
-      return result;
-    } catch (error) {
-      // Log but still respond with 200 OK for webhooks to avoid retries flooding
-      return { ok: false, message: error.message || 'Webhook processing failed' };
-    }
+ // src/chapa/chapa.controller.ts
+@Post('webhook')
+@HttpCode(HttpStatus.OK)
+async handleWebhook(
+  @Req() req: Request,
+  @Body() payload: any,
+) {
+  if (!payload) {
+    return { ok: true };
   }
+
+  try {
+    await this.bookingService.handleChapaWebhook(req, payload);
+    return { ok: true };
+  } catch (error) {
+    // NEVER throw — Chapa must receive 200 OK
+    console.error('❌ Webhook error:', error?.message || error);
+    return { ok: false };
+  }
+}
 }

@@ -231,17 +231,17 @@ export class BookingService {
     );
 
     /* ---------- RESPONSE ---------- */
-    return {
-      bookingId: booking._id,
-      paymentReference: externalPaymentRef,
-      grossAmount,
-      netAmount,
-      vatAmount,
-      currency: 'ETB',
-      expiresAt,
-      checkoutUrl: chapaResponse.checkoutUrl,
-      message: 'Redirecting to Chapa checkout...',
-    };
+   return {
+  bookingId: booking._id,
+  paymentReference: externalPaymentRef,
+  grossAmount,
+  netAmount,
+  vatAmount,
+  vatRate: this.VAT_RATE, // 0.15
+  currency: 'ETB',
+  expiresAt,
+  checkoutUrl: chapaResponse.checkoutUrl,
+};
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
@@ -249,11 +249,10 @@ export class BookingService {
     throw new InternalServerErrorException('Booking creation failed');
   }
 }
-
 // ===================================================
-// Chapa Webhook -> update payment status (IDEMPOTENT)
+// Chapa Webhook → Update Booking Payment Status
 // ===================================================
-public async handleChapaWebhook(payload: any) {
+public async handleChapaWebhook(req: any, payload: any) {
   const reference =
     payload?.tx_ref ||
     payload?.reference ||
@@ -263,56 +262,39 @@ public async handleChapaWebhook(payload: any) {
     throw new BadRequestException('Missing tx_ref in webhook');
   }
 
-  // ---------------------------------------------------
-  // 1️⃣ Find booking
-  // ---------------------------------------------------
   const booking = await this.bookingModel
     .findOne({ externalPaymentRef: reference })
     .populate('merchant customer asset');
 
   if (!booking) {
-    this.logger.warn(`⚠️ Webhook received for unknown ref: ${reference}`);
-    return { ok: false }; // safe for retries
+    this.logger.warn(`⚠️ Webhook for unknown ref: ${reference}`);
+    return { ok: false };
   }
 
-  // ---------------------------------------------------
-  // 2️⃣ IDEMPOTENCY: already PAID
-  // ---------------------------------------------------
+  // 🔁 IDEMPOTENCY
   if (booking.paymentStatus === PaymentStatus.PAID) {
-    this.logger.log(`🔁 Webhook ignored — booking ${booking._id} already PAID`);
+    this.logger.log(`🔁 Booking ${booking._id} already PAID`);
     return { ok: true };
   }
 
-  // ---------------------------------------------------
-  // 3️⃣ VERIFY WITH CHAPA (DO NOT TRUST WEBHOOK)
-  // ---------------------------------------------------
+  // 🔐 VERIFY WITH CHAPA (DO NOT TRUST WEBHOOK)
   const verification = await this.chapaService.verifyTransaction(reference);
 
-  // Store raw webhook + verification for audit
   booking.webhookPayload = payload;
   booking.paymentVerification = verification.raw;
 
-  // ---------------------------------------------------
-  // 4️⃣ HANDLE STATUS
-  // ---------------------------------------------------
+  // ⏳ Not successful yet
   if (verification.status !== 'success') {
-    this.logger.warn(
-      `⏳ Payment not successful yet for ${reference}, status=${verification.status}`,
-    );
-
     booking.paymentStatus = PaymentStatus.PENDING;
     await booking.save();
-
     return { ok: true };
   }
 
-  // ---------------------------------------------------
-  // 5️⃣ AMOUNT VALIDATION (CRITICAL)
-  // ---------------------------------------------------
+  // 💰 AMOUNT VALIDATION (FLOAT SAFE)
   const expectedAmount = Number(booking.totalPrice);
   const receivedAmount = Number(verification.amount);
 
-  if (receivedAmount !== expectedAmount) {
+  if (Math.abs(expectedAmount - receivedAmount) > 0.5) {
     this.logger.error(
       `❌ Amount mismatch for ${reference}: expected ${expectedAmount}, got ${receivedAmount}`,
     );
@@ -320,32 +302,25 @@ public async handleChapaWebhook(payload: any) {
     booking.paymentStatus = PaymentStatus.MISMATCH;
     await booking.save();
 
-    throw new BadRequestException('Amount mismatch — manual review required');
+    return { ok: false };
   }
 
-  // ---------------------------------------------------
-  // 6️⃣ MARK BOOKING AS PAID
-  // ---------------------------------------------------
+  // ✅ MARK AS PAID
   booking.paymentStatus = PaymentStatus.PAID;
   booking.status = BookingStatus.CONFIRMED;
-
   booking.transactionId = verification.transactionId;
   booking.paymentApprovedAt = verification.paidAt
     ? new Date(verification.paidAt)
     : new Date();
-
-  // Payment expiry no longer needed
   booking.expiresAt = null;
 
   await booking.save();
 
-  // ---------------------------------------------------
-  // 7️⃣ NOTIFY MERCHANT
-  // ---------------------------------------------------
+  // 🔔 Notify merchant / customer
   await this.notifyMerchantPaymentReceived(booking);
 
   this.logger.log(
-    `✅ Payment confirmed for booking ${booking._id} (ref: ${reference})`,
+    `✅ Payment confirmed for booking ${booking._id}`,
   );
 
   return { ok: true };
