@@ -1,30 +1,19 @@
-// src/customer-operations/customer-operations.service.ts
 import {
   Injectable,
   NotFoundException,
   InternalServerErrorException,
-  ForbiddenException,
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import sharp from 'sharp';
-import * as Tesseract from 'tesseract.js';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { I18nService } from 'nestjs-i18n';
-import * as streamifier from 'streamifier';
-import { BookingStatus, PaymentStatus } from '../booking/booking.schema';
 import { Asset, AssetDocument } from '../property/property.schema';
-import { Booking, BookingDocument } from '../booking/booking.schema';
+import { Booking, BookingDocument, BookingStatus, PaymentStatus } from '../booking/booking.schema';
 import { User, UserDocument } from '../schema/user.schema';
-import { CloudinaryService } from '../cloudinary/cloudinary.service'; // ✅ Correct import
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { ChapaService } from '../chapa/chapa.service';
 
-interface ExtractedPaymentData {
-  isCBE: boolean;
-  accountNumber: string | null;
-  amount: number | null;
-  reference: string | null;
-}
 @Injectable()
 export class CustomerOperationsService {
   private readonly logger = new Logger(CustomerOperationsService.name);
@@ -35,8 +24,8 @@ export class CustomerOperationsService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly i18n: I18nService,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly chapaService: ChapaService, // Inject ChapaService
   ) {}
-
 
 // ===========================================================
 async getPropertiesByCategory(category: string, lang?: string, customCategory?: string) {
@@ -122,40 +111,67 @@ async getPropertiesByCategory(category: string, lang?: string, customCategory?: 
     );
   }
 }
-
-  // ===========================================================
-  // 2️⃣ GET BOOKINGS CREATED BY LOGGED-IN CUSTOMER
-  // ===========================================================
-  
+// ==========================================================
+  // 1️⃣ Fetch all bookings for a customer + generate checkoutUrl for unpaid bookings
+  // ==========================================================
   async getMyBookings(customerId: Types.ObjectId, lang: string) {
     try {
+      // Fetch bookings with populated fields
       const bookings = await this.bookingModel
         .find({ customer: customerId })
-        .populate('asset', 'name category numberOfProperty imageUrls')
-        .populate('merchant', 'fullName email phonenumber businessName')
-        .populate('customer', 'fullName email phonenumber')
+        .populate('asset merchant customer')
         .lean()
         .exec();
 
       if (!bookings.length) {
         throw new NotFoundException(
-          await this.i18n.translate(
-            'customer-operation.ERROR_NO_BOOKING_FOUND',
-            { lang },
-          ),
+          await this.i18n.translate('customer-operation.ERROR_NO_BOOKING_FOUND', { lang }),
         );
       }
 
-      return {
-        message: await this.i18n.translate(
-          'customer-operation.SUCCESS_BOOKINGS_FETCHED',
-          { lang },
-        ),
-        totalBookings: bookings.length,
-        bookings: bookings.map((booking) => {
+      const now = new Date();
+
+      const result = await Promise.all(
+        bookings.map(async (booking) => {
+          let checkoutUrl: string | null = null;
+
+          // Only generate checkout for unpaid, unexpired bookings
+          if (
+            booking.paymentStatus === PaymentStatus.UNPAID &&
+            booking.expiresAt &&
+            new Date(booking.expiresAt) > now
+          ) {
+            try {
+              if (!booking.externalPaymentRef) {
+                throw new BadRequestException('Booking is missing externalPaymentRef');
+              }
+              if (booking.totalPrice === undefined) {
+                throw new BadRequestException('Booking totalPrice is missing');
+              }
+
+              const customer = booking.customer as unknown as { fullName: string; email: string };
+              const asset = booking.asset as unknown as { name: string };
+
+              // Initialize Chapa payment
+              const payment = await this.chapaService.initializePayment({
+                txRef: booking.externalPaymentRef!,
+                amount: booking.totalPrice!,
+                customerEmail: customer.email,
+                customerFirstName: customer.fullName,
+                callbackUrl: `${process.env.API_URL}/chapa/webhook`,
+                description: `Booking payment for ${asset.name}`,
+              });
+
+              checkoutUrl = payment.checkoutUrl;
+            } catch (err) {
+              this.logger.error(`Failed to create Chapa payment for booking ${booking._id}`, err);
+            }
+          }
+
           const asset = booking.asset as any;
           const merchant = booking.merchant as any;
           const customer = booking.customer as any;
+
           return {
             bookingId: booking._id,
             assetName: asset?.name || 'N/A',
@@ -167,7 +183,10 @@ async getPropertiesByCategory(category: string, lang?: string, customCategory?: 
             endDate: booking.endDate,
             totalPrice: booking.totalPrice,
             status: booking.status,
-            paymentProofPath: booking.paymentProofPath || null, // 👈 Added
+            paymentStatus: booking.paymentStatus,
+            paymentProofPath: booking.paymentProofPath || null,
+            expiresAt: booking.expiresAt,
+            checkoutUrl, // FRONTEND uses this to pay
             merchant: {
               name: merchant?.fullName || 'N/A',
               email: merchant?.email || 'N/A',
@@ -181,14 +200,21 @@ async getPropertiesByCategory(category: string, lang?: string, customCategory?: 
             },
           };
         }),
+      );
+
+      return {
+        message: await this.i18n.translate('customer-operation.SUCCESS_BOOKINGS_FETCHED', { lang }),
+        totalBookings: bookings.length,
+        bookings: result,
       };
     } catch (error) {
-      console.error('❌ Error fetching bookings:', error);
+      this.logger.error('❌ Error fetching bookings', error);
       throw new InternalServerErrorException(
         await this.i18n.translate('customer-operation.ERROR_INTERNAL', { lang }),
       );
     }
   }
+
  // 🧩 Helper — Upload any image to Cloudinary (Reusable)
   // ===========================================================
   private async uploadToCloudinary(file: Express.Multer.File, folder: string): Promise<string> {
