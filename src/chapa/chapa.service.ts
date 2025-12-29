@@ -1,4 +1,3 @@
-// src/chapa/chapa.service.ts
 import {
   Injectable,
   BadRequestException,
@@ -7,16 +6,33 @@ import {
 } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 
+/* ===================================================
+   TYPES
+   =================================================== */
+
 export interface InitializePaymentParams {
   txRef: string;
   amount: number;
   currency?: 'ETB';
+
   customerEmail: string;
   customerFirstName: string;
   customerLastName?: string;
   customerPhone?: string;
-  callbackUrl: string; // webhook endpoint
-  returnUrl?: string;   // optional front-end redirect
+
+  /**
+   * ⚠️ IMPORTANT
+   * This is NOT a webhook.
+   * It is a browser redirect URL after payment.
+   */
+  returnUrl?: string;
+
+  /**
+   * Chapa webhook URL
+   * MUST ALSO be registered in Chapa Dashboard
+   */
+  webhookUrl: string;
+
   description?: string;
 }
 
@@ -33,14 +49,19 @@ export interface VerifyTransactionResult {
   raw: any;
 }
 
+/* ===================================================
+   SERVICE
+   =================================================== */
+
 @Injectable()
 export class ChapaService {
   private readonly logger = new Logger(ChapaService.name);
+
   private readonly baseUrl = 'https://api.chapa.co/v1/transaction';
   private readonly secretKey = process.env.CHAPA_SECRET_KEY!;
   private readonly http: AxiosInstance;
 
-  private readonly MAX_TEST_AMOUNT = 1_000_000; // test mode limit
+  private readonly MAX_TEST_AMOUNT = 1_000_000; // Chapa sandbox limit
 
   constructor() {
     if (!this.secretKey) {
@@ -53,14 +74,16 @@ export class ChapaService {
         Authorization: `Bearer ${this.secretKey}`,
         'Content-Type': 'application/json',
       },
-      timeout: 15000,
+      timeout: 15_000,
     });
   }
 
-  // ===================================================
-  // INITIALIZE PAYMENT → RETURNS CHECKOUT URL
-  // ===================================================
-  async initializePayment(params: InitializePaymentParams): Promise<InitializePaymentResult> {
+  /* ===================================================
+     INITIALIZE PAYMENT
+     =================================================== */
+  async initializePayment(
+    params: InitializePaymentParams,
+  ): Promise<InitializePaymentResult> {
     const {
       txRef,
       amount,
@@ -69,23 +92,36 @@ export class ChapaService {
       customerFirstName,
       customerLastName = '',
       customerPhone,
-      callbackUrl,
+      webhookUrl,
       returnUrl,
       description,
     } = params;
 
-    if (!txRef || !customerEmail || amount <= 0) {
-      throw new BadRequestException('Invalid Chapa parameters');
+    /* ---------- VALIDATION ---------- */
+    if (!txRef || !customerEmail || !customerFirstName) {
+      throw new BadRequestException('Missing required Chapa parameters');
+    }
+
+    if (amount <= 0) {
+      throw new BadRequestException('Invalid payment amount');
     }
 
     if (amount > this.MAX_TEST_AMOUNT) {
-      throw new BadRequestException(`Amount exceeds Chapa test limit (${this.MAX_TEST_AMOUNT} ETB)`);
+      throw new BadRequestException(
+        `Amount exceeds Chapa test limit (${this.MAX_TEST_AMOUNT} ETB)`,
+      );
     }
 
-    const safeDescription = description?.slice(0, 50) ?? 'Booking payment';
+    if (!webhookUrl) {
+      throw new BadRequestException('webhookUrl is required');
+    }
 
+    const safeDescription =
+      description?.slice(0, 50) ?? 'Booking payment';
+
+    /* ---------- API CALL ---------- */
     try {
-      const res = await this.http.post('/initialize', {
+      const response = await this.http.post('/initialize', {
         tx_ref: txRef,
         amount,
         currency,
@@ -95,8 +131,16 @@ export class ChapaService {
         last_name: customerLastName,
         phone_number: customerPhone,
 
-        callback_url: callbackUrl,
-        return_url: returnUrl, // optional → controls post-payment redirect
+        /**
+         * ⚠️ Chapa does NOT guarantee webhook delivery
+         * unless webhook is ALSO registered in dashboard
+         */
+        callback_url: webhookUrl,
+
+        /**
+         * Browser redirect after payment
+         */
+        return_url: returnUrl,
 
         customization: {
           title: 'Booking Payment',
@@ -108,32 +152,52 @@ export class ChapaService {
         },
       });
 
-      const checkoutUrl = res?.data?.data?.checkout_url;
+      const checkoutUrl = response?.data?.data?.checkout_url;
+
       if (!checkoutUrl) {
-        this.logger.error('Invalid Chapa initialize response', res?.data);
-        throw new InternalServerErrorException('Invalid Chapa response');
+        this.logger.error(
+          'Invalid Chapa initialize response',
+          response?.data,
+        );
+        throw new InternalServerErrorException(
+          'Chapa did not return checkout URL',
+        );
       }
 
-      this.logger.log(`Chapa checkout initialized: ${checkoutUrl}`);
+      this.logger.log(
+        `✅ Chapa initialized | txRef=${txRef}`,
+      );
+
       return { checkoutUrl };
     } catch (err: any) {
-      this.logger.error('Chapa initialize failed', err?.response?.data || err);
-      throw new InternalServerErrorException('Failed to initialize Chapa payment');
+      this.logger.error(
+        '❌ Chapa initialize failed',
+        err?.response?.data || err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to initialize Chapa payment',
+      );
     }
   }
 
-  // ===================================================
-  // VERIFY PAYMENT (SOURCE OF TRUTH)
-  // ===================================================
-  async verifyTransaction(txRef: string): Promise<VerifyTransactionResult> {
-    if (!txRef) throw new BadRequestException('txRef is required');
+  /* ===================================================
+     VERIFY PAYMENT (SOURCE OF TRUTH)
+     =================================================== */
+  async verifyTransaction(
+    txRef: string,
+  ): Promise<VerifyTransactionResult> {
+    if (!txRef) {
+      throw new BadRequestException('txRef is required');
+    }
 
     try {
-      const res = await this.http.get(`/verify/${txRef}`);
-      const data = res?.data?.data;
+      const response = await this.http.get(`/verify/${txRef}`);
+      const data = response?.data?.data;
 
       if (!data) {
-        throw new InternalServerErrorException('Invalid verification response');
+        throw new InternalServerErrorException(
+          'Invalid verification response',
+        );
       }
 
       return {
@@ -145,15 +209,24 @@ export class ChapaService {
         raw: data,
       };
     } catch (err: any) {
-      this.logger.error('Chapa verification failed', err?.response?.data || err);
-      throw new InternalServerErrorException('Failed to verify Chapa payment');
+      this.logger.error(
+        '❌ Chapa verification failed',
+        err?.response?.data || err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to verify Chapa payment',
+      );
     }
   }
 
-  // ===================================================
-  // HELPER: FLOAT SAFE AMOUNT CHECK
-  // ===================================================
-  public amountsMatch(expected: number, received: number, tolerance = 0.5): boolean {
+  /* ===================================================
+     AMOUNT SAFETY CHECK
+     =================================================== */
+  public amountsMatch(
+    expected: number,
+    received: number,
+    tolerance = 0.5,
+  ): boolean {
     return Math.abs(expected - received) <= tolerance;
   }
 }

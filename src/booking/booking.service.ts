@@ -168,9 +168,7 @@ public async createBookingForPayment(
      6️⃣ PAYMENT METADATA
      =================================================== */
   const externalPaymentRef = `BOOK-${randomUUID()}`;
-  const expiresAt = moment()
-    .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
-    .toDate();
+  const expiresAt = startUTC;
 
   /* ===================================================
      7️⃣ INITIATE CHAPA (SOURCE OF CHECKOUT URL)
@@ -183,7 +181,7 @@ public async createBookingForPayment(
       amount: grossAmount,
       customerEmail: customer.email,
       customerFirstName: customer.fullName,
-      callbackUrl: `${process.env.API_URL}/chapa/webhook`,
+      webhookUrl: `${process.env.API_URL}/chapa/webhook`,
       description: `Booking payment for ${asset.name}`,
     });
 
