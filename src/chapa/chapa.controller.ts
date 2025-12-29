@@ -8,19 +8,19 @@ export class ChapaController {
 
   constructor(private readonly bookingService: BookingService) {}
 
-  // 🔔 PUBLIC WEBHOOK ENDPOINT
-  @Post('webhook')
-  @HttpCode(HttpStatus.OK)
-  async handleWebhook(@Body() payload: any) {
-    this.logger.log('🔔 Chapa webhook received');
-    this.logger.debug(JSON.stringify(payload));
+@Post('webhook')
+@HttpCode(HttpStatus.OK)
+async handleWebhook(@Body() payload: any) {
+  this.logger.log('🔔 Chapa webhook received');
+  this.logger.debug('Webhook payload: ' + JSON.stringify(payload));
 
-    try {
-      await this.bookingService.handleChapaWebhook(payload);
-      return { ok: true };
-    } catch (err) {
-      this.logger.error('Webhook processing failed', err?.message);
-      return { ok: true }; // ALWAYS 200
-    }
+  try {
+    const result = await this.bookingService.handleChapaWebhook(payload);
+    this.logger.log('Webhook processing result: ' + JSON.stringify(result));
+    return { ok: true };
+  } catch (err) {
+    this.logger.error('Webhook processing failed', err?.message);
+    return { ok: true };
   }
-}
+}}
+
