@@ -179,43 +179,45 @@ export class ChapaService {
       );
     }
   }
-async verifyTransaction(txRef: string): Promise<VerifyTransactionResult> {
-  if (!txRef) throw new BadRequestException('txRef is required');
 
-  try {
-    const response = await this.http.get(`/verify/${txRef}`);
-    const data = response?.data?.data;
-
-    if (!data) throw new InternalServerErrorException('Invalid verification response');
-
-    // Normalize status
-    let status: 'success' | 'pending' | 'failed';
-    switch (data.status.toLowerCase()) {
-      case 'successful':
-        status = 'success';
-        break;
-      case 'failed':
-        status = 'failed';
-        break;
-      case 'pending':
-      default:
-        status = 'pending';
-        break;
+  /* ===================================================
+     VERIFY PAYMENT (SOURCE OF TRUTH)
+     =================================================== */
+  async verifyTransaction(
+    txRef: string,
+  ): Promise<VerifyTransactionResult> {
+    if (!txRef) {
+      throw new BadRequestException('txRef is required');
     }
 
-    return {
-      status,
-      amount: Number(data.amount),
-      currency: data.currency,
-      transactionId: data.id,
-      paidAt: data.paid_at || data.created_at,
-      raw: data,
-    };
-  } catch (err: any) {
-    this.logger.error('❌ Chapa verification failed', err?.response?.data || err);
-    throw new InternalServerErrorException('Failed to verify Chapa payment');
+    try {
+      const response = await this.http.get(`/verify/${txRef}`);
+      const data = response?.data?.data;
+
+      if (!data) {
+        throw new InternalServerErrorException(
+          'Invalid verification response',
+        );
+      }
+
+      return {
+        status: data.status, // success | pending | failed
+        amount: Number(data.amount),
+        currency: data.currency,
+        transactionId: data.id,
+        paidAt: data.created_at,
+        raw: data,
+      };
+    } catch (err: any) {
+      this.logger.error(
+        '❌ Chapa verification failed',
+        err?.response?.data || err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to verify Chapa payment',
+      );
+    }
   }
-}
 
   /* ===================================================
      AMOUNT SAFETY CHECK
