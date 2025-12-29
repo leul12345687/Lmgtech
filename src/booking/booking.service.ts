@@ -65,7 +65,10 @@ export class BookingService {
   // ===================================================
   // CREATE BOOKING → INITIATE CHAPA → RETURN CHECKOUT URL
   // ===================================================
-  public async createBookingForPayment(
+  // ===================================================
+// CREATE BOOKING → INITIATE CHAPA → RETURN CHECKOUT URL
+// ===================================================
+public async createBookingForPayment(
   customerId: Types.ObjectId,
   assetName: string,
   merchantEmail: string,
@@ -76,12 +79,16 @@ export class BookingService {
   securityDeposit = 0,
   lang = 'en',
 ) {
-  /* ---------- VALIDATION ---------- */
+  /* ===================================================
+     1️⃣ VALIDATION
+     =================================================== */
   if (!customerId || !assetName || !merchantEmail || numberOfProperty <= 0) {
     throw new BadRequestException('Invalid booking data');
   }
 
-  /* ---------- LOAD USERS ---------- */
+  /* ===================================================
+     2️⃣ LOAD USERS
+     =================================================== */
   const merchant = await this.userModel.findOne({
     email: merchantEmail,
     role: UserRole.MERCHANT,
@@ -96,7 +103,9 @@ export class BookingService {
     throw new NotFoundException('Customer not found');
   }
 
-  /* ---------- LOAD ASSET ---------- */
+  /* ===================================================
+     3️⃣ LOAD ASSET
+     =================================================== */
   const assetModel = this.propertyService['assetModel'] as Model<AssetDocument>;
   const asset = await assetModel.findOne({
     name: assetName,
@@ -108,7 +117,9 @@ export class BookingService {
     throw new NotFoundException('Asset not available');
   }
 
-  /* ---------- DATE HANDLING ---------- */
+  /* ===================================================
+     4️⃣ DATE HANDLING (ET → UTC)
+     =================================================== */
   const startUTC = moment.tz(startDate, this.ET_TIMEZONE).utc().toDate();
   const endUTC = moment.tz(endDate, this.ET_TIMEZONE).utc().toDate();
 
@@ -116,7 +127,9 @@ export class BookingService {
     throw new BadRequestException('Invalid date range');
   }
 
-  /* ---------- PRICING ---------- */
+  /* ===================================================
+     5️⃣ PRICING
+     =================================================== */
   const units = this.calculateDuration(startUTC, endUTC, timeInterval);
   if (units <= 0) {
     throw new BadRequestException('Invalid duration');
@@ -138,7 +151,6 @@ export class BookingService {
     (pricePerUnit * units * numberOfProperty).toFixed(2),
   );
 
-  /* ---------- CHAPA HARD LIMIT GUARDS ---------- */
   if (grossAmount <= 0) {
     throw new BadRequestException('Invalid payment amount');
   }
@@ -152,34 +164,42 @@ export class BookingService {
   const netAmount = Number((grossAmount / (1 + this.VAT_RATE)).toFixed(2));
   const vatAmount = Number((grossAmount - netAmount).toFixed(2));
 
-  /* ---------- PAYMENT METADATA ---------- */
-  const externalPaymentRef = randomUUID();
+  /* ===================================================
+     6️⃣ PAYMENT METADATA
+     =================================================== */
+  const externalPaymentRef = `BOOK-${randomUUID()}`;
   const expiresAt = moment()
     .add(this.PAYMENT_EXPIRE_HOURS, 'hours')
     .toDate();
 
-  /* ==================================================
-     🚨 INITIATE CHAPA FIRST (NO DB TRANSACTION YET)
-     ================================================== */
-  let chapaResponse;
+  /* ===================================================
+     7️⃣ INITIATE CHAPA (SOURCE OF CHECKOUT URL)
+     =================================================== */
+  let checkoutUrl: string;
+
   try {
-    chapaResponse = await this.chapaService.initializePayment({
+    const chapaResponse = await this.chapaService.initializePayment({
       txRef: externalPaymentRef,
       amount: grossAmount,
       customerEmail: customer.email,
       customerFirstName: customer.fullName,
       callbackUrl: `${process.env.API_URL}/chapa/webhook`,
+      description: `Booking payment for ${asset.name}`,
     });
+
+    if (!chapaResponse?.checkoutUrl) {
+      throw new Error('Missing checkout URL');
+    }
+
+    checkoutUrl = chapaResponse.checkoutUrl;
   } catch (err) {
     this.logger.error('Chapa initialization failed', err);
     throw new BadRequestException('Unable to initialize payment');
   }
 
-  if (!chapaResponse?.checkoutUrl) {
-    throw new BadRequestException('Chapa did not return checkout URL');
-  }
-
-  /* ---------- DB TRANSACTION ---------- */
+  /* ===================================================
+     8️⃣ DB TRANSACTION (ATOMIC)
+     =================================================== */
   const session = await this.bookingModel.db.startSession();
   session.startTransaction();
 
@@ -190,22 +210,30 @@ export class BookingService {
           customer: customer._id,
           merchant: merchant._id,
           asset: asset._id,
+
           startDate: startUTC,
           endDate: endUTC,
           timeInterval,
           numberOfUnits: units,
           numberOfProperty,
+
           pricePerUnit,
           totalPrice: grossAmount,
           securityDeposit,
+
           status: BookingStatus.PENDING,
           paymentStatus: PaymentStatus.UNPAID,
+
           externalPaymentRef,
+          checkoutUrl,
           expiresAt,
+
           vatRate: this.VAT_RATE,
           vatAmount,
           netAmount,
+
           merchantAccountNumber: merchant.acountnumber,
+
           snapshot: {
             merchantName: merchant.businessName || merchant.fullName,
             merchantEmail: merchant.email,
@@ -221,7 +249,9 @@ export class BookingService {
     await session.commitTransaction();
     session.endSession();
 
-    /* ---------- NOTIFY (AFTER COMMIT) ---------- */
+    /* ===================================================
+       9️⃣ NOTIFY AFTER COMMIT
+       =================================================== */
     await this.notifyBookingCreatedPaymentRequired(
       booking,
       customer,
@@ -229,25 +259,29 @@ export class BookingService {
       asset,
     );
 
-    /* ---------- RESPONSE ---------- */
-   return {
-  bookingId: booking._id,
-  paymentReference: externalPaymentRef,
-  grossAmount,
-  netAmount,
-  vatAmount,
-  vatRate: this.VAT_RATE, // 0.15
-  currency: 'ETB',
-  expiresAt,
-  checkoutUrl: chapaResponse.checkoutUrl,
-};
+    /* ===================================================
+       🔟 RESPONSE
+       =================================================== */
+    return {
+      bookingId: booking._id,
+      paymentReference: externalPaymentRef,
+      grossAmount,
+      netAmount,
+      vatAmount,
+      vatRate: this.VAT_RATE,
+      currency: 'ETB',
+      expiresAt,
+      checkoutUrl,
+    };
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
-    this.logger.error(err);
+
+    this.logger.error('Booking creation failed', err);
     throw new InternalServerErrorException('Booking creation failed');
   }
 }
+
 // ===================================================
 // Chapa Webhook → Update Booking Payment Status
 // ===================================================

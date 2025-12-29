@@ -114,6 +114,9 @@ export class Booking {
   @Prop()
   paymentProofPath?: string;
 
+@Prop()
+checkoutUrl:string;
+
   @Prop()
   transactionId?: string;
 

@@ -110,110 +110,106 @@ async getPropertiesByCategory(category: string, lang?: string, customCategory?: 
       await this.i18n.translate('customer-operation.ERROR_INTERNAL', { lang }),
     );
   }
-}
+}// ==========================================================
+// 1️⃣ Fetch all bookings for a customer (NO payment creation here)
 // ==========================================================
-  // 1️⃣ Fetch all bookings for a customer + generate checkoutUrl for unpaid bookings
-  // ==========================================================
-  async getMyBookings(customerId: Types.ObjectId, lang: string) {
-    try {
-      // Fetch bookings with populated fields
-      const bookings = await this.bookingModel
-        .find({ customer: customerId })
-        .populate('asset merchant customer')
-        .lean()
-        .exec();
+async getMyBookings(customerId: Types.ObjectId, lang: string) {
+  try {
+    const bookings = await this.bookingModel
+      .find({ customer: customerId })
+      .populate('asset merchant customer')
+      .lean()
+      .exec();
 
-      if (!bookings.length) {
-        throw new NotFoundException(
-          await this.i18n.translate('customer-operation.ERROR_NO_BOOKING_FOUND', { lang }),
-        );
-      }
-
-      const now = new Date();
-
-      const result = await Promise.all(
-        bookings.map(async (booking) => {
-          let checkoutUrl: string | null = null;
-
-          // Only generate checkout for unpaid, unexpired bookings
-          if (
-            booking.paymentStatus === PaymentStatus.UNPAID &&
-            booking.expiresAt &&
-            new Date(booking.expiresAt) > now
-          ) {
-            try {
-              if (!booking.externalPaymentRef) {
-                throw new BadRequestException('Booking is missing externalPaymentRef');
-              }
-              if (booking.totalPrice === undefined) {
-                throw new BadRequestException('Booking totalPrice is missing');
-              }
-
-              const customer = booking.customer as unknown as { fullName: string; email: string };
-              const asset = booking.asset as unknown as { name: string };
-
-              // Initialize Chapa payment
-              const payment = await this.chapaService.initializePayment({
-                txRef: booking.externalPaymentRef!,
-                amount: booking.totalPrice!,
-                customerEmail: customer.email,
-                customerFirstName: customer.fullName,
-                callbackUrl: `${process.env.API_URL}/chapa/webhook`,
-                description: `Booking payment for ${asset.name}`,
-              });
-
-              checkoutUrl = payment.checkoutUrl;
-            } catch (err) {
-              this.logger.error(`Failed to create Chapa payment for booking ${booking._id}`, err);
-            }
-          }
-
-          const asset = booking.asset as any;
-          const merchant = booking.merchant as any;
-          const customer = booking.customer as any;
-
-          return {
-            bookingId: booking._id,
-            assetName: asset?.name || 'N/A',
-            category: asset?.category || 'N/A',
-            numberOfProperty: booking?.numberOfProperty || 0,
-            imageUrls: asset?.imageUrls || [],
-            priceUnit: booking?.timeInterval || 'N/A',
-            startDate: booking.startDate,
-            endDate: booking.endDate,
-            totalPrice: booking.totalPrice,
-            status: booking.status,
-            paymentStatus: booking.paymentStatus,
-            paymentProofPath: booking.paymentProofPath || null,
-            expiresAt: booking.expiresAt,
-            checkoutUrl, // FRONTEND uses this to pay
-            merchant: {
-              name: merchant?.fullName || 'N/A',
-              email: merchant?.email || 'N/A',
-              phone: merchant?.phonenumber || 'N/A',
-              businessName: merchant?.businessName || 'N/A',
-            },
-            bookedBy: {
-              name: customer?.fullName || 'N/A',
-              email: customer?.email || 'N/A',
-              phone: customer?.phonenumber || 'N/A',
-            },
-          };
-        }),
-      );
-
-      return {
-        message: await this.i18n.translate('customer-operation.SUCCESS_BOOKINGS_FETCHED', { lang }),
-        totalBookings: bookings.length,
-        bookings: result,
-      };
-    } catch (error) {
-      this.logger.error('❌ Error fetching bookings', error);
-      throw new InternalServerErrorException(
-        await this.i18n.translate('customer-operation.ERROR_INTERNAL', { lang }),
+    if (!bookings.length) {
+      throw new NotFoundException(
+        await this.i18n.translate(
+          'customer-operation.ERROR_NO_BOOKING_FOUND',
+          { lang },
+        ),
       );
     }
+
+    const now = new Date();
+
+    const result = bookings.map((booking) => {
+      const asset = booking.asset as any;
+      const merchant = booking.merchant as any;
+      const customer = booking.customer as any;
+
+      /* =========================================
+         PAYMENT ELIGIBILITY LOGIC
+         ========================================= */
+      const isPayable =
+        booking.paymentStatus === PaymentStatus.UNPAID &&
+        booking.expiresAt &&
+        new Date(booking.expiresAt) > now;
+
+      return {
+        bookingId: booking._id,
+
+        /* ---------- ASSET ---------- */
+        assetName: asset?.name || 'N/A',
+        category: asset?.category || 'N/A',
+        imageUrls: asset?.imageUrls || [],
+
+        /* ---------- BOOKING ---------- */
+        numberOfProperty: booking?.numberOfProperty || 0,
+        priceUnit: booking?.timeInterval || 'N/A',
+        startDate: booking.startDate,
+        endDate: booking.endDate,
+        totalPrice: booking.totalPrice,
+        status: booking.status,
+
+        /* ---------- PAYMENT ---------- */
+        paymentStatus: booking.paymentStatus,
+        paymentProofPath: booking.paymentProofPath || null,
+        expiresAt: booking.expiresAt,
+
+        /**
+         * 🔑 VERY IMPORTANT
+         * - checkoutUrl is returned ONLY if payable
+         * - frontend shows Pay Now button ONLY if checkoutUrl exists
+         */
+        checkoutUrl: isPayable ? booking.checkoutUrl : null,
+
+        /* ---------- MERCHANT ---------- */
+        merchant: {
+          name: merchant?.fullName || 'N/A',
+          email: merchant?.email || 'N/A',
+          phone: merchant?.phonenumber || 'N/A',
+          businessName: merchant?.businessName || 'N/A',
+        },
+
+        /* ---------- CUSTOMER ---------- */
+        bookedBy: {
+          name: customer?.fullName || 'N/A',
+          email: customer?.email || 'N/A',
+          phone: customer?.phonenumber || 'N/A',
+        },
+      };
+    });
+
+    return {
+      message: await this.i18n.translate(
+        'customer-operation.SUCCESS_BOOKINGS_FETCHED',
+        { lang },
+      ),
+      totalBookings: bookings.length,
+      bookings: result,
+    };
+  } catch (error) {
+    this.logger.error('❌ Error fetching bookings', error);
+
+    throw new InternalServerErrorException(
+      await this.i18n.translate(
+        'customer-operation.ERROR_INTERNAL',
+        { lang },
+      ),
+    );
   }
+}
+
 
  // 🧩 Helper — Upload any image to Cloudinary (Reusable)
   // ===========================================================
