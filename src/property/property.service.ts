@@ -67,56 +67,76 @@ export class PropertyService {
    * AI Image Validation
    */
   private async validateImageWithAI(
-    image: Express.Multer.File,
-  ): Promise<void> {
-    try {
-      const formData = new FormData();
-      formData.append('file', image.buffer, {
-        filename: image.originalname,
-        contentType: image.mimetype,
-      });
-
-      const response = await firstValueFrom(
-        this.httpService.post(
-          `${this.AI_BASE_URL}/validate-asset-image`,
-          formData,
-          {
-            headers: formData.getHeaders(),
-          },
-        ),
-      );
-
-      if (response.data.status !== 'valid') {
-        throw new BadRequestException(
-          'AI detected invalid asset image.',
-        );
-      }
-    } catch (error) {
-      throw new BadRequestException(
-        'Asset image validation failed by AI service.',
-      );
-    }
-  }
-
-  /**
-   * AI Demand Prediction
-   */
-  private async getPreUploadDemand(category: string): Promise<number> {
+  image: Express.Multer.File,
+): Promise<{ allowed: boolean; confidence: number; prediction: string; message: string }> {
   try {
+    const formData = new FormData();
+
+    formData.append('file', image.buffer, {
+      filename: image.originalname,
+      contentType: image.mimetype,
+    });
+
     const response = await firstValueFrom(
-      this.httpService.get(
-        `${this.AI_BASE_URL}/pre-upload-demand`,
+      this.httpService.post(
+        `${this.AI_BASE_URL}/validate-asset-image`,
+        formData,
         {
-          params: { category }, // ✅ only category
+          headers: {
+            ...formData.getHeaders(),
+          },
         },
       ),
     );
 
-    return response.data?.demand_score ?? 0;
+    const data = response.data;
 
+    return {
+      allowed: data.allowed_upload ?? false,
+      confidence: data.confidence ?? 0.0,
+      prediction: data.prediction ?? 'unknown',
+      message: data.message ?? '',
+    };
   } catch (error) {
-    console.warn('AI demand service unavailable. Using default demandScore = 0');
-    return 0;
+    throw new BadRequestException(
+      'Asset image validation failed by AI service.',
+    );
+  }
+}
+
+  /**
+   * AI Demand Prediction
+   */
+  private async getPreUploadDemand(category: string): Promise<{
+  predictedDemand: number;
+  demandLevel: string;
+  notification: string;
+  recommendedAction: string;
+}> {
+  try {
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
+        params: { category },
+      }),
+    );
+
+    const data = response.data;
+
+    return {
+      predictedDemand: data.predicted_demand_value ?? 0,
+      demandLevel: data.demand_level ?? 'UNKNOWN',
+      notification: data.merchant_notification ?? '',
+      recommendedAction: data.recommended_action ?? '',
+    };
+  } catch (error) {
+    console.warn('AI demand service unavailable. Using default values.');
+
+    return {
+      predictedDemand: 0,
+      demandLevel: 'UNKNOWN',
+      notification: '',
+      recommendedAction: '',
+    };
   }
 }
 

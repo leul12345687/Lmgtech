@@ -2,14 +2,12 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
-
 import { PropertyController } from './property.controller';
 import { PropertyService } from './property.service';
-
 import { MerchantAuthModule } from '../merchant/MerchantAuthmodule';
 import { Asset, AssetSchema } from './property.schema';
 import { User, UserSchema } from '../schema/user.schema';
-
+import { HttpModule } from '@nestjs/axios';
 @Module({
   imports: [
     // 🗄 Register Mongoose Schemas
@@ -25,7 +23,9 @@ import { User, UserSchema } from '../schema/user.schema';
     }),
 
     // 👤 Merchant Auth Module
-    MerchantAuthModule,
+    MerchantAuthModule, 
+    HttpModule,
+  
   ],
 
   controllers: [PropertyController],
