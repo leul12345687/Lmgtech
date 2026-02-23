@@ -2,12 +2,15 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
-  ForbiddenException,
-  NotFoundException,
+  ForbiddenException,NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { I18nService } from 'nestjs-i18n';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import FormData from 'form-data';
+
 import { Asset, AssetDocument, AssetStatus } from './property.schema';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -16,7 +19,7 @@ export interface ICreateAssetPayload {
   name: string;
   description: string;
   category: string;
-  location:string;
+  location: string;
   rentalPriceperday: number;
   rentalPriceperhour: number;
   rentalPriceperweek: number;
@@ -28,28 +31,97 @@ export interface ICreateAssetPayload {
 
 @Injectable()
 export class PropertyService {
+  private readonly AI_BASE_URL =
+    'https://ai-merchant-portal.onrender.com';
+
   constructor(
-    @InjectModel(Asset.name) private readonly assetModel: Model<AssetDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Asset.name)
+    private readonly assetModel: Model<AssetDocument>,
+
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+
     private readonly i18n: I18nService,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly httpService: HttpService,
   ) {}
 
   /**
-   * Finds existing similar category or returns normalized new category
+   * Normalize and reuse existing category if similar
    */
-  private async findOrCreateCategory(inputCategory: string): Promise<string> {
+  private async findOrCreateCategory(
+    inputCategory: string,
+  ): Promise<string> {
     const normalized = inputCategory.trim().toLowerCase();
 
     const existingCategory = await this.assetModel.findOne({
       category: { $regex: new RegExp(`^${normalized}`, 'i') },
     });
 
-    return existingCategory ? existingCategory.category : normalized;
+    return existingCategory
+      ? existingCategory.category
+      : normalized;
   }
 
   /**
-   * Creates a new property (asset) for a merchant
+   * AI Image Validation
+   */
+  private async validateImageWithAI(
+    image: Express.Multer.File,
+  ): Promise<void> {
+    try {
+      const formData = new FormData();
+      formData.append('file', image.buffer, {
+        filename: image.originalname,
+        contentType: image.mimetype,
+      });
+
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${this.AI_BASE_URL}/validate-asset-image`,
+          formData,
+          {
+            headers: formData.getHeaders(),
+          },
+        ),
+      );
+
+      if (response.data.status !== 'valid') {
+        throw new BadRequestException(
+          'AI detected invalid asset image.',
+        );
+      }
+    } catch (error) {
+      throw new BadRequestException(
+        'Asset image validation failed by AI service.',
+      );
+    }
+  }
+
+  /**
+   * AI Demand Prediction
+   */
+  private async getPreUploadDemand(category: string): Promise<number> {
+  try {
+    const response = await firstValueFrom(
+      this.httpService.get(
+        `${this.AI_BASE_URL}/pre-upload-demand`,
+        {
+          params: { category }, // ✅ only category
+        },
+      ),
+    );
+
+    return response.data?.demand_score ?? 0;
+
+  } catch (error) {
+    console.warn('AI demand service unavailable. Using default demandScore = 0');
+    return 0;
+  }
+}
+
+  /**
+   * Create Property
    */
   async createProperty(
     merchantId: Types.ObjectId,
@@ -60,6 +132,7 @@ export class PropertyService {
       name,
       description,
       category,
+      location,
       rentalPriceperday,
       rentalPriceperhour,
       rentalPriceperweek,
@@ -67,20 +140,36 @@ export class PropertyService {
       rentalPriceperyear,
       numberOfProperty,
       imageFiles,
-      location,
     } = assetPayload;
 
-    const notMerchantError = await this.i18n.translate('property.ERROR_NOT_MERCHANT', { lang });
-    const successMessage = await this.i18n.translate('property.SUCCESS_PROPERTY_CREATED', { lang });
-    const missingFieldsError = await this.i18n.translate('property.ERROR_REQUIRED_FIELDS', { lang });
+    const notMerchantError =
+      await this.i18n.translate(
+        'property.ERROR_NOT_MERCHANT',
+        { lang },
+      );
 
-    // Validate merchant
-    const merchant = await this.userModel.findById(merchantId).exec();
+    const successMessage =
+      await this.i18n.translate(
+        'property.SUCCESS_PROPERTY_CREATED',
+        { lang },
+      );
+
+    const missingFieldsError =
+      await this.i18n.translate(
+        'property.ERROR_REQUIRED_FIELDS',
+        { lang },
+      );
+
+    // Validate Merchant
+    const merchant = await this.userModel
+      .findById(merchantId)
+      .exec();
+
     if (!merchant || merchant.role !== UserRole.MERCHANT) {
       throw new ForbiddenException(notMerchantError);
     }
 
-    // Validate mandatory fields
+    // Validate required fields
     if (!category?.trim() || !location?.trim()) {
       throw new BadRequestException(missingFieldsError);
     }
@@ -89,22 +178,39 @@ export class PropertyService {
       throw new BadRequestException(missingFieldsError);
     }
 
-    // Normalize location and find or create category
-    const normalizedLocation = location.trim().toLowerCase();
-    const finalCategory = await this.findOrCreateCategory(category);
+    const normalizedLocation =
+      location.trim().toLowerCase();
 
-    // Upload images in parallel
+    const finalCategory =
+      await this.findOrCreateCategory(category);
+
+    // 🔥 1️⃣ AI IMAGE VALIDATION (before upload)
+    await this.validateImageWithAI(imageFiles[0]);
+
+    // 🔥 2️⃣ AI DEMAND PREDICTION
+    const demandScore =
+      await this.getPreUploadDemand(
+        finalCategory,
+      );
+
+    // 🔥 3️⃣ Upload Images to Cloudinary
     let imageUrls: string[] = [];
     try {
       const uploadPromises = imageFiles.map((file) =>
-        this.cloudinaryService.uploadImage(file, 'property-images'),
+        this.cloudinaryService.uploadImage(
+          file,
+          'property-images',
+        ),
       );
+
       imageUrls = await Promise.all(uploadPromises);
     } catch (error) {
-      throw new InternalServerErrorException('Failed to upload images to Cloudinary.');
+      throw new InternalServerErrorException(
+        'Failed to upload images to Cloudinary.',
+      );
     }
 
-    // Create the asset
+    // 🔥 4️⃣ Create Asset
     const newAsset = new this.assetModel({
       merchant: merchantId,
       name,
@@ -119,7 +225,7 @@ export class PropertyService {
       numberOfProperty,
       imageUrls,
       status: AssetStatus.AVAILABLE,
-      demandScore: 0,
+      demandScore,
       monthlyEstimatedIncome: 0,
     });
 
@@ -135,6 +241,7 @@ export class PropertyService {
       asset: populatedAsset,
     };
   }
+
 
 // ===========================================================
 // GET ALL PROPERTIES (MANAGER)

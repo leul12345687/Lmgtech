@@ -76,7 +76,6 @@ async getPropertiesByCategory(category: string, lang?: string, customCategory?: 
         name: asset.name,
         description: asset.description,
         category: asset.category,
-        customCategory: asset.customCategory || null,
         numberOfProperty: asset.numberOfProperty,
         status: asset.status,
         imageUrls: asset.imageUrls || [],
