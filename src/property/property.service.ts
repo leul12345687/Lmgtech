@@ -2,20 +2,21 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
-  ForbiddenException,NotFoundException,
+  ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { I18nService } from 'nestjs-i18n';
-import { Asset, AssetDocument, AssetCategory, AssetStatus } from './property.schema';
+import { Asset, AssetDocument, AssetStatus } from './property.schema';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 export interface ICreateAssetPayload {
   name: string;
   description: string;
-  customCategory?: string; // ✅ Added '?' to make it optional
-  category: AssetCategory;
+  category: string;
+  location:string;
   rentalPriceperday: number;
   rentalPriceperhour: number;
   rentalPriceperweek: number;
@@ -31,11 +32,24 @@ export class PropertyService {
     @InjectModel(Asset.name) private readonly assetModel: Model<AssetDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly i18n: I18nService,
-    private readonly cloudinaryService: CloudinaryService, // ✅ Now globally available
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   /**
-   * Creates a new property (asset) for a merchant.
+   * Finds existing similar category or returns normalized new category
+   */
+  private async findOrCreateCategory(inputCategory: string): Promise<string> {
+    const normalized = inputCategory.trim().toLowerCase();
+
+    const existingCategory = await this.assetModel.findOne({
+      category: { $regex: new RegExp(`^${normalized}`, 'i') },
+    });
+
+    return existingCategory ? existingCategory.category : normalized;
+  }
+
+  /**
+   * Creates a new property (asset) for a merchant
    */
   async createProperty(
     merchantId: Types.ObjectId,
@@ -52,53 +66,51 @@ export class PropertyService {
       rentalPricepermonth,
       rentalPriceperyear,
       numberOfProperty,
-      customCategory,
       imageFiles,
+      location,
     } = assetPayload;
 
-    // 🧩 Translations
-    const missingFieldsError = await this.i18n.translate('property.ERROR_REQUIRED_FIELDS', { lang });
-    const successMessage = await this.i18n.translate('property.SUCCESS_PROPERTY_CREATED', { lang });
     const notMerchantError = await this.i18n.translate('property.ERROR_NOT_MERCHANT', { lang });
+    const successMessage = await this.i18n.translate('property.SUCCESS_PROPERTY_CREATED', { lang });
+    const missingFieldsError = await this.i18n.translate('property.ERROR_REQUIRED_FIELDS', { lang });
 
-    //1,🔍 Validate merchant role
+    // Validate merchant
     const merchant = await this.userModel.findById(merchantId).exec();
     if (!merchant || merchant.role !== UserRole.MERCHANT) {
       throw new ForbiddenException(notMerchantError);
     }
-// 2. Validate "Other" Category Logic
-  if (category === AssetCategory.OTHER && (!customCategory || customCategory.trim() === '')) {
-    throw new BadRequestException(
-      await this.i18n.translate('property.ERROR_SPECIFY_OTHER_CATEGORY', { lang })
-    );
-  }
 
-  // 3. Image Validation
-  if (!imageFiles || imageFiles.length === 0) {
-    throw new BadRequestException(
-      await this.i18n.translate('property.ERROR_REQUIRED_FIELDS', { lang })
-    );
-  }
+    // Validate mandatory fields
+    if (!category?.trim() || !location?.trim()) {
+      throw new BadRequestException(missingFieldsError);
+    }
 
-  // 4. Optimized Parallel Uploads
-  // Promise.all is much faster than a for-loop for multiple images
-  let imageUrls: string[] = [];
-  try {
-    const uploadPromises = imageFiles.map((file) =>
-      this.cloudinaryService.uploadImage(file, 'property-images'),
-    );
-    imageUrls = await Promise.all(uploadPromises);
-  } catch (error) {
-    
-    throw new InternalServerErrorException('Failed to upload images to Cloudinary.');
-  }
-    // 💾 Create the asset record
+    if (!imageFiles || imageFiles.length === 0) {
+      throw new BadRequestException(missingFieldsError);
+    }
+
+    // Normalize location and find or create category
+    const normalizedLocation = location.trim().toLowerCase();
+    const finalCategory = await this.findOrCreateCategory(category);
+
+    // Upload images in parallel
+    let imageUrls: string[] = [];
+    try {
+      const uploadPromises = imageFiles.map((file) =>
+        this.cloudinaryService.uploadImage(file, 'property-images'),
+      );
+      imageUrls = await Promise.all(uploadPromises);
+    } catch (error) {
+      throw new InternalServerErrorException('Failed to upload images to Cloudinary.');
+    }
+
+    // Create the asset
     const newAsset = new this.assetModel({
       merchant: merchantId,
       name,
       description,
-      category,
-      customCategory: category === AssetCategory.OTHER ? customCategory : null,
+      category: finalCategory,
+      location: normalizedLocation,
       rentalPriceperday,
       rentalPriceperhour,
       rentalPriceperweek,
@@ -107,11 +119,12 @@ export class PropertyService {
       numberOfProperty,
       imageUrls,
       status: AssetStatus.AVAILABLE,
+      demandScore: 0,
+      monthlyEstimatedIncome: 0,
     });
 
     await newAsset.save();
 
-    // 👤 Populate merchant info before returning
     const populatedAsset = await newAsset.populate(
       'merchant',
       'fullName email phonenumber businessName accountnumber',
@@ -122,7 +135,6 @@ export class PropertyService {
       asset: populatedAsset,
     };
   }
-
 
 // ===========================================================
 // GET ALL PROPERTIES (MANAGER)

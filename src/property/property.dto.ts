@@ -1,10 +1,8 @@
-// src/property/dto/create-asset.dto.ts
-import { IsString, IsNumber, IsEnum, IsNotEmpty, Min,IsOptional } from 'class-validator';
+import { IsString, IsNumber, IsNotEmpty, Min } from 'class-validator';
 import { Type } from 'class-transformer';
-import { AssetCategory } from './property.schema';
 
 export class CreateAssetDto {
- @IsString()
+  @IsString()
   @IsNotEmpty()
   name: string;
 
@@ -12,22 +10,23 @@ export class CreateAssetDto {
   @IsNotEmpty()
   description: string;
 
-  @IsEnum(AssetCategory)
-  category: AssetCategory;
+  @IsString()
+  @IsNotEmpty()
+  location: string;
 
   @IsString()
-  @IsOptional()
-  customCategory?: string;
-
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  rentalPriceperday: number;
+  @IsNotEmpty()
+  category: string;
 
   @Type(() => Number)
   @IsNumber()
   @Min(0)
   rentalPriceperhour: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  rentalPriceperday: number;
 
   @Type(() => Number)
   @IsNumber()

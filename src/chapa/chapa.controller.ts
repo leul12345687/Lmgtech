@@ -1,5 +1,5 @@
 // src/chapa/chapa.controller.ts
-import { Controller, Post, Body, HttpCode, HttpStatus, Logger } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, Logger,Get } from '@nestjs/common';
 import { BookingService } from '../booking/booking.service';
 
 @Controller('chapa')
@@ -22,5 +22,7 @@ async handleWebhook(@Body() payload: any) {
     this.logger.error('Webhook processing failed', err?.message);
     return { ok: true };
   }
-}}
+}
+
+}
 

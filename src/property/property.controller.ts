@@ -16,7 +16,7 @@ import { memoryStorage } from 'multer';
 import { Types } from 'mongoose';
 import { I18nLang, I18nService } from 'nestjs-i18n';
 
-import { PropertyService, ICreateAssetPayload } from './property.service';
+import { PropertyService,} from './property.service';
 import { AssetDocument } from './property.schema';
 import { MerchantJwtAuthGuard } from 'src/merchant/merchantAuthGuard';
 import { CreateAssetDto } from './property.dto';

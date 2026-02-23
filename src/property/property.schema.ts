@@ -1,15 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { User } from '../schema/user.schema'; 
-//import {Booking} from "../booking/booking.schema"
-export type AssetDocument = Asset & Document;
+import { User } from '../schema/user.schema';
 
-export enum AssetCategory {
-  EVENT_SUPPLY = 'EventSupply',
-  CONSTRUCTION_EQUIPMENT = 'ConstructionEquipment',
-  HEALTHCARE_MEDICAL = 'HealthcareMedical',
-  OTHER = 'Other',
-}
+export type AssetDocument = Asset & Document;
 
 export enum AssetStatus {
   AVAILABLE = 'available',
@@ -19,47 +12,68 @@ export enum AssetStatus {
 
 @Schema({ timestamps: true })
 export class Asset {
-  @Prop({ type: Types.ObjectId, ref: User.name, required: true })
+  @Prop({ type: Types.ObjectId, ref: User.name, required: true, index: true })
   merchant: Types.ObjectId;
- // ✅ Use string 'Booking' instead of importing Booking class
+
   @Prop({ type: Types.ObjectId, ref: 'Booking', required: false })
   booking?: Types.ObjectId;
+
   @Prop({ required: true, trim: true })
   name: string;
-   @Prop({ required: false, trim: true })
-priceUnit:string;
-  @Prop({ required: true })
+
+  @Prop({ required: false, trim: true })
+  priceUnit?: string;
+
+  @Prop({ required: true, trim: true })
   description: string;
 
-  @Prop({ required: true, type: Number })
-  rentalPriceperday: number;
-  
-@Prop({ required: false, trim: true })
-customCategory?: string; // This stores the specific name if "Other" is chosen
-  @Prop({ required: true, type: Number })
-  rentalPriceperhour: number;
-  
-  @Prop({ required: true, type: Number })
-  rentalPriceperweek: number;
-  
-  @Prop({ required: true, type: Number })
-  rentalPricepermonth: number;
-  
-  @Prop({ required: true, type: Number })
-  rentalPriceperyear: number;
- 
+  @Prop({ required: true, trim: true, lowercase: true, index: true })
+  location: string;
 
-  @Prop({ required: true, enum: AssetCategory })
-  category: AssetCategory;
+  @Prop({ required: true, trim: true, lowercase: true, index: true })
+  category: string;
+
+  @Prop({ required: true, type: Number, min: 0 })
+  rentalPriceperhour: number;
+
+  @Prop({ required: true, type: Number, min: 0 })
+  rentalPriceperday: number;
+
+  @Prop({ required: true, type: Number, min: 0 })
+  rentalPriceperweek: number;
+
+  @Prop({ required: true, type: Number, min: 0 })
+  rentalPricepermonth: number;
+
+  @Prop({ required: true, type: Number, min: 0 })
+  rentalPriceperyear: number;
 
   @Prop({ type: [String], default: [] })
-  imageUrls: string[]; 
+  imageUrls: string[];
 
-  @Prop({ required: true, enum: AssetStatus, default: AssetStatus.AVAILABLE })
+  @Prop({
+    required: true,
+    enum: AssetStatus,
+    default: AssetStatus.AVAILABLE,
+    index: true,
+  })
   status: AssetStatus;
-  
-  @Prop({ required: true, type: Number, default: 1 })
+
+  @Prop({ required: true, type: Number, default: 1, min: 1 })
   numberOfProperty: number;
+
+  @Prop({ type: Number, default: 0 })
+  demandScore: number;
+
+  @Prop({ type: Number })
+  recommendedPrice?: number;
+
+  @Prop({ type: Number, default: 0 })
+  monthlyEstimatedIncome: number;
 }
 
 export const AssetSchema = SchemaFactory.createForClass(Asset);
+
+AssetSchema.index({ location: 1, category: 1 });
+AssetSchema.index({ merchant: 1 });
+AssetSchema.index({ status: 1 });

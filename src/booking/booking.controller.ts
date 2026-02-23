@@ -6,7 +6,8 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  BadRequestException,
+  BadRequestException,Logger,
+  
 } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { TimeInterval } from './booking.schema';
@@ -69,5 +70,4 @@ export class BookingController {
 
     return bookingResult;
   }
-
 }
