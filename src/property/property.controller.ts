@@ -30,55 +30,59 @@ export class PropertyController {
     private readonly i18n: I18nService,
   ) {}
 
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @UseGuards(MerchantJwtAuthGuard)
-  @UseInterceptors(
-    FilesInterceptor('images', 5, {
-      storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-      fileFilter: (req, file, callback) => {
-        // Optional: Ensure only images are uploaded
-        if (!file.mimetype.match(/\/(jpg|jpeg|png|webp)$/)) {
-          return callback(new BadRequestException('Only image files are allowed!'), false);
-        }
-        callback(null, true);
-      },
-    }),
-  )
-  async create(
-    @Body() payload: CreateAssetDto,
-    @UploadedFiles() files: Array<Express.Multer.File>,
-    @Req() req: any,
-    @I18nLang() lang: string,
-  ): Promise<{ message: string; asset: AssetDocument }> {
-    this.logger.log(`📥 Received request from Merchant: ${req.user?.sub}`);
+ @Post()
+@HttpCode(HttpStatus.CREATED)
+@UseGuards(MerchantJwtAuthGuard)
+@UseInterceptors(
+  FilesInterceptor('images', 5, {
+    storage: memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (req, file, callback) => {
+      if (!file.mimetype.match(/\/(jpg|jpeg|png|webp)$/)) {
+        return callback(new BadRequestException('Only image files are allowed!'), false);
+      }
+      callback(null, true);
+    },
+  }),
+)
+async create(
+  @Body() payload: CreateAssetDto,
+  @UploadedFiles() files: Array<Express.Multer.File>,
+  @Req() req: any,
+  @I18nLang() lang: string,
+) {
+  this.logger.log(`📥 Received request from Merchant: ${req.user?.sub}`);
 
-    // 1. Validate files exist
-    if (!files || files.length === 0) {
-      throw new BadRequestException(
-        await this.i18n.translate('property.ERROR_IMAGE_REQUIRED', { lang })
-      );
-    }
-
-    // 2. Validate Merchant ID from Request (added safer check)
-    const merchantId = req.user?.sub;
-    if (!Types.ObjectId.isValid(merchantId)) {
-      throw new BadRequestException('Invalid authentication credentials.');
-    }
-
-    // 3. Delegate to service
-    // We pass the payload and files separately or combined as per the interface
-    return await this.propertyService.createProperty(
-      new Types.ObjectId(merchantId),
-      {
-        ...payload,
-        imageFiles: files,
-      },
-      lang,
+  if (!files?.length) {
+    throw new BadRequestException(
+      await this.i18n.translate('property.ERROR_IMAGE_REQUIRED', { lang }),
     );
   }
 
+  const merchantId = req.user?.sub;
+  if (!Types.ObjectId.isValid(merchantId)) {
+    throw new BadRequestException('Invalid authentication credentials.');
+  }
+
+  // AI Demand prediction BEFORE creating property
+  const demand = await this.propertyService.getPreUploadDemand(payload.category);
+
+  // Pass demand info into payload (optional)
+  const enhancedPayload = {
+    ...payload,
+    demandScore: demand.predictedDemand,
+    demandLevel: demand.demandLevel,
+  };
+
+  return await this.propertyService.createProperty(
+    new Types.ObjectId(merchantId),
+    {
+      ...enhancedPayload,
+      imageFiles: files,
+    },
+    lang,
+  );
+}
 
 
  @Get('all')

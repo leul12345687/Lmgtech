@@ -66,7 +66,7 @@ export class PropertyService {
   /**
    * AI Image Validation
    */
-  private async validateImageWithAI(
+  async validateImageWithAI(
   image: Express.Multer.File,
 ): Promise<{ allowed: boolean; confidence: number; prediction: string; message: string }> {
   try {
@@ -107,7 +107,7 @@ export class PropertyService {
   /**
    * AI Demand Prediction
    */
-  private async getPreUploadDemand(category: string): Promise<{
+  async getPreUploadDemand(category: string): Promise<{
   predictedDemand: number;
   demandLevel: string;
   notification: string;

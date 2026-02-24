@@ -22,6 +22,8 @@ import { BankingController } from './banking/banking.controller';
 import { BankingModule } from './banking/banking.module';
 import { ChapaModule } from './chapa/chapa.module';
 
+import { AiIncomeInfoModule } from './ai_income-info/ai_income-info.module';
+
 import * as path from 'path';
 
 @Module({
@@ -78,7 +80,8 @@ import * as path from 'path';
     ScheduleModule.forRoot(),
     ProfileModule,
     BankingModule,
-    ChapaModule ,   // ✅ VERY IMPORTANT
+    ChapaModule,
+    AiIncomeInfoModule ,   // ✅ VERY IMPORTANT
   ],
   controllers: [AppController, BankingController,  ],
   providers: [AppService, BankingService,  ],

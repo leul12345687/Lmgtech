@@ -12,7 +12,7 @@ import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { I18nService } from 'nestjs-i18n';
-
+import { AiService } from '../ai_income-info/ai_income-info.service';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
@@ -39,24 +39,26 @@ export interface IMerchantLoginResponse {
     id: string;
     email: string;
     fullName: string;
-    phonenumber: number;
-    acountnumber: number;
+    phonenumber:number;
+    acountnumber:number;
     businessName: string;
     address: string;
-    profilePictureUrl: string;
+    profilePictureUrl?: string;
     role: UserRole;
   };
+  financialInfo?: any;
 }
-
 @Injectable()
 export class MerchantService {
   private readonly logger = new Logger(MerchantService.name);
 
   constructor(
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly jwtService: JwtService,
     private readonly i18n: I18nService,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly aiService: AiService,
   ) {}
 
   // ===========================================================
@@ -140,62 +142,97 @@ export class MerchantService {
       },
     };
   }
-
-  // ===========================================================
-  // 🟡 LOGIN MERCHANT
+// ===========================================================
+  // 🔐 LOGIN MERCHANT
   // ===========================================================
   async login(
     credentials: IMerchantLoginPayload,
     lang: string,
   ): Promise<IMerchantLoginResponse> {
-    console.log('🔑 [MerchantService.login] called with:', credentials);
+    try {
+      const { email, password } = credentials;
+      this.logger.log(`Login attempt for merchant: ${email}`);
 
-    const { email, password } = credentials;
+      // 🔎 Find merchant
+      const merchant = await this.userModel
+        .findOne({
+          email: email.toLowerCase(),
+          role: UserRole.MERCHANT,
+          isActive: true,
+        })
+        .select('+password')
+        .exec();
 
-    const merchant = await this.userModel
-      .findOne({ email, role: UserRole.MERCHANT, isActive: true })
-      .select('+password')
-      .exec();
+      const invalidMsg = await this.i18n.translate(
+        'merchant.ERROR_INVALID_CREDENTIALS',
+        { lang },
+      );
 
-    const invalidMsg = await this.i18n.translate('merchant.ERROR_INVALID_CREDENTIALS', { lang });
-    const inactiveMsg = await this.i18n.translate('merchant.ERROR_INACTIVE_ACCOUNT', { lang });
-    const successMsg = await this.i18n.translate('merchant.SUCCESS_LOGIN', { lang });
+      const successMsg = await this.i18n.translate(
+        'merchant.SUCCESS_LOGIN',
+        { lang },
+      );
 
-    if (!merchant || !merchant.password) {
-      console.warn(`⚠️ No active merchant found for email: ${email}`);
-      throw new UnauthorizedException(inactiveMsg);
+      if (!merchant || !merchant.password) {
+        this.logger.warn(`Invalid login attempt: ${email}`);
+        throw new UnauthorizedException(invalidMsg);
+      }
+
+      // 🔐 Validate password
+      const isMatch = await bcrypt.compare(password, merchant.password);
+
+      if (!isMatch) {
+        this.logger.warn(`Wrong password for merchant: ${email}`);
+        throw new UnauthorizedException(invalidMsg);
+      }
+
+      // 🕒 Update last login
+      merchant.lastLogin = new Date();
+      await merchant.save();
+
+      // 🎟 Generate JWT
+      const token = this.generateToken(merchant._id, merchant.role);
+
+      // 💰 Fetch Financial Info from AI Service
+      let financialInfo = null;
+      try {
+        financialInfo = await this.aiService.getMerchantIncome(
+          merchant._id.toString(),
+        );
+      } catch (aiError) {
+        this.logger.warn(
+          `AI financial service failed for merchant ${merchant._id}`,
+        );
+      }
+
+      this.logger.log(`Merchant login successful: ${email}`);
+
+      return {
+        token,
+        message: successMsg,
+        merchant: {
+          id: merchant._id.toString(),
+          email: merchant.email,
+          fullName: merchant.fullName,
+          phonenumber: merchant.phonenumber,
+          acountnumber: merchant.acountnumber,
+          businessName: merchant.businessName,
+          address: merchant.address,
+          profilePictureUrl: merchant.profilePictureUrl,
+          role: merchant.role,
+        },
+        financialInfo,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Login failed: ${error.message}`,
+        error.stack,
+      );
+      throw new InternalServerErrorException(
+        'Merchant login failed',
+      );
     }
-
-    const isMatch = await bcrypt.compare(password, merchant.password);
-    if (!isMatch) {
-      console.warn(`⚠️ Invalid password for merchant: ${email}`);
-      throw new UnauthorizedException(invalidMsg);
-    }
-
-    merchant.lastLogin = new Date();
-    await merchant.save();
-
-    console.log('✅ Merchant login successful:', email);
-
-    const token = this.generateToken(merchant._id, merchant.role);
-
-    return {
-      token,
-      message: successMsg,
-      merchant: {
-        id: merchant._id.toString(),
-        email: merchant.email,
-        fullName: merchant.fullName,
-        phonenumber: merchant.phonenumber,
-        acountnumber: merchant.acountnumber,
-        businessName: merchant.businessName,
-        address: merchant.address,
-        profilePictureUrl: merchant.profilePictureUrl,
-        role: merchant.role,
-      },
-    };
   }
-
   // ===========================================================
   // 🔵 FETCH ALL MERCHANTS
   // ===========================================================
