@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { AiService } from './ai_income-info.service';
 
+@Global() 
 @Module({
   imports: [
     HttpModule.register({
