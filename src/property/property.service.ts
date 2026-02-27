@@ -94,15 +94,18 @@ export class PropertyService {
 
     return response.data;
 
-  } catch (error) {
-    console.error('AI STATUS:', error.response?.status);
-    console.error('AI DATA:', error.response?.data);
+  }catch (error) {
+  console.error('========= AI ERROR DEBUG =========');
+  console.error('Status:', error.response?.status);
+  console.error('Data:', error.response?.data);
+  console.error('Message:', error.message);
+  console.error('Stack:', error.stack);
+  console.error('==================================');
 
-    throw new BadRequestException(
-      error.response?.data?.detail ||
-      'AI validation failed',
-    );
-  }
+  throw new BadRequestException(
+    error.response?.data || 'AI validation failed',
+  );
+}
 }
 
   /**
