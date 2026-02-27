@@ -66,9 +66,7 @@ export class PropertyService {
   /**
    * AI Image Validation
    */
-  async validateImageWithAI(
-  image: Express.Multer.File,
-): Promise<{ allowed: boolean; confidence: number; prediction: string; message: string }> {
+  async validateImageWithAI(image: Express.Multer.File) {
   try {
     const formData = new FormData();
 
@@ -77,29 +75,32 @@ export class PropertyService {
       contentType: image.mimetype,
     });
 
+    const headers = {
+      ...formData.getHeaders(),
+      'Content-Length': formData.getLengthSync(),
+    };
+
     const response = await firstValueFrom(
       this.httpService.post(
         `${this.AI_BASE_URL}/validate-asset-image`,
         formData,
         {
-          headers: {
-            ...formData.getHeaders(),
-          },
+          headers,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
         },
       ),
     );
 
-    const data = response.data;
+    return response.data;
 
-    return {
-      allowed: data.allowed_upload ?? false,
-      confidence: data.confidence ?? 0.0,
-      prediction: data.prediction ?? 'unknown',
-      message: data.message ?? '',
-    };
   } catch (error) {
+    console.error('AI STATUS:', error.response?.status);
+    console.error('AI DATA:', error.response?.data);
+
     throw new BadRequestException(
-      'Asset image validation failed by AI service.',
+      error.response?.data?.detail ||
+      'AI validation failed',
     );
   }
 }
