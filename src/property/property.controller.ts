@@ -74,14 +74,14 @@ async create(
     demandLevel: demand.demandLevel,
   };
 
-  return await this.propertyService.createProperty(
-    new Types.ObjectId(merchantId),
-    {
-      ...enhancedPayload,
-      imageFiles: files,
-    },
-    lang,
-  );
+ return this.propertyService.createProperty(
+  new Types.ObjectId(merchantId),
+  {
+    ...payload,
+    imageFiles: files,
+  },
+  lang,
+);
 }
 
 

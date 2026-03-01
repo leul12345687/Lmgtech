@@ -212,10 +212,8 @@ export class PropertyService {
     await this.validateImageWithAI(imageFiles[0]);
 
     // 🔥 2️⃣ AI DEMAND PREDICTION
-    const demandScore =
-      await this.getPreUploadDemand(
-        finalCategory,
-      );
+    const demandData =
+  await this.getPreUploadDemand(finalCategory);
 
     // 🔥 3️⃣ Upload Images to Cloudinary
     let imageUrls: string[] = [];
@@ -249,7 +247,7 @@ export class PropertyService {
       numberOfProperty,
       imageUrls,
       status: AssetStatus.AVAILABLE,
-      demandScore,
+      demandScore: demandData.predictedDemand,  // ✅ FIXED
       monthlyEstimatedIncome: 0,
     });
 
