@@ -148,10 +148,11 @@ export class PropertyService {
    * Create Property
    */
   async createProperty(
-    merchantId: Types.ObjectId,
-    assetPayload: ICreateAssetPayload,
-    lang: string,
-  ): Promise<{ message: string; asset: AssetDocument }> {
+  merchantId: Types.ObjectId,
+  assetPayload: ICreateAssetPayload,
+  lang: string,
+): Promise<{ message: string; asset: AssetDocument }> {
+  try {
     const {
       name,
       description,
@@ -166,34 +167,36 @@ export class PropertyService {
       imageFiles,
     } = assetPayload;
 
-    const notMerchantError =
-      await this.i18n.translate(
-        'property.ERROR_NOT_MERCHANT',
-        { lang },
-      );
+    // ================================
+    // 1️⃣ TRANSLATIONS (i18n)
+    // ================================
+    const notMerchantError = await this.i18n.translate(
+      'property.ERROR_NOT_MERCHANT',
+      { lang },
+    );
 
-    const successMessage =
-      await this.i18n.translate(
-        'property.SUCCESS_PROPERTY_CREATED',
-        { lang },
-      );
+    const successMessage = await this.i18n.translate(
+      'property.SUCCESS_PROPERTY_CREATED',
+      { lang },
+    );
 
-    const missingFieldsError =
-      await this.i18n.translate(
-        'property.ERROR_REQUIRED_FIELDS',
-        { lang },
-      );
+    const missingFieldsError = await this.i18n.translate(
+      'property.ERROR_REQUIRED_FIELDS',
+      { lang },
+    );
 
-    // Validate Merchant
-    const merchant = await this.userModel
-      .findById(merchantId)
-      .exec();
+    // ================================
+    // 2️⃣ MERCHANT VALIDATION
+    // ================================
+    const merchant = await this.userModel.findById(merchantId).exec();
 
     if (!merchant || merchant.role !== UserRole.MERCHANT) {
       throw new ForbiddenException(notMerchantError);
     }
 
-    // Validate required fields
+    // ================================
+    // 3️⃣ REQUIRED FIELD VALIDATION
+    // ================================
     if (!category?.trim() || !location?.trim()) {
       throw new BadRequestException(missingFieldsError);
     }
@@ -202,27 +205,57 @@ export class PropertyService {
       throw new BadRequestException(missingFieldsError);
     }
 
-    const normalizedLocation =
-      location.trim().toLowerCase();
+    const normalizedLocation = location.trim().toLowerCase();
 
-    const finalCategory =
-      await this.findOrCreateCategory(category);
+    const finalCategory = await this.findOrCreateCategory(category);
 
-    // 🔥 1️⃣ AI IMAGE VALIDATION (before upload)
-    await this.validateImageWithAI(imageFiles[0]);
+    // ================================
+    // 4️⃣ AI IMAGE VALIDATION (FIRST IMAGE)
+    // ================================
+    const validation = await this.validateImageWithAI(imageFiles[0]);
 
-    // 🔥 2️⃣ AI DEMAND PREDICTION
-    const demandData =
-  await this.getPreUploadDemand(finalCategory);
+    if (!validation || validation.status !== 'success') {
+      throw new InternalServerErrorException(
+        'AI validation service failed.',
+      );
+    }
 
-    // 🔥 3️⃣ Upload Images to Cloudinary
+    if (validation.allowed_upload === false) {
+      throw new BadRequestException({
+        message: 'AI detected invalid image. Registration failed.',
+        prediction: validation.prediction,
+        confidence: validation.confidence,
+      });
+    }
+
+    // ================================
+    // 5️⃣ AI DEMAND PREDICTION
+    // ================================
+    let demandPrediction;
+
+    try {
+      demandPrediction = await this.getPreUploadDemand(finalCategory);
+    } catch (error) {
+      console.warn(
+        'AI demand service unavailable. Using default values.',
+      );
+
+      demandPrediction = {
+        predictedDemand: 0,
+        demandLevel: 'UNKNOWN',
+        notification: '',
+        recommendedAction: '',
+      };
+    }
+
+    // ================================
+    // 6️⃣ UPLOAD IMAGES TO CLOUDINARY
+    // ================================
     let imageUrls: string[] = [];
+
     try {
       const uploadPromises = imageFiles.map((file) =>
-        this.cloudinaryService.uploadImage(
-          file,
-          'property-images',
-        ),
+        this.cloudinaryService.uploadImage(file, 'property-images'),
       );
 
       imageUrls = await Promise.all(uploadPromises);
@@ -232,7 +265,9 @@ export class PropertyService {
       );
     }
 
-    // 🔥 4️⃣ Create Asset
+    // ================================
+    // 7️⃣ CREATE MONGODB DOCUMENT
+    // ================================
     const newAsset = new this.assetModel({
       merchant: merchantId,
       name,
@@ -247,23 +282,43 @@ export class PropertyService {
       numberOfProperty,
       imageUrls,
       status: AssetStatus.AVAILABLE,
-      demandScore: demandData.predictedDemand,  // ✅ FIXED
+
+      // AI Demand Data
+      demandScore: demandPrediction.predictedDemand,
       monthlyEstimatedIncome: 0,
     });
 
     await newAsset.save();
 
+    // Populate merchant data
     const populatedAsset = await newAsset.populate(
       'merchant',
       'fullName email phonenumber businessName accountnumber',
     );
 
+    // ================================
+    // 8️⃣ SUCCESS RESPONSE
+    // ================================
     return {
       message: successMessage,
       asset: populatedAsset,
     };
-  }
+  } catch (error) {
+    console.error('❌ Property creation error:', error);
 
+    if (
+      error instanceof BadRequestException ||
+      error instanceof ForbiddenException ||
+      error instanceof InternalServerErrorException
+    ) {
+      throw error;
+    }
+
+    throw new InternalServerErrorException(
+      'Property creation failed.',
+    );
+  }
+}
 
 // ===========================================================
 // GET ALL PROPERTIES (MANAGER)
