@@ -88,6 +88,7 @@ export class PropertyService {
           headers,
           maxBodyLength: Infinity,
           maxContentLength: Infinity,
+           timeout: 90000,
         },
       ),
     );
@@ -120,7 +121,7 @@ export class PropertyService {
   try {
     const response = await firstValueFrom(
       this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
-        params: { category },
+        params: { category }, timeout: 90000,
       }),
     );
 
