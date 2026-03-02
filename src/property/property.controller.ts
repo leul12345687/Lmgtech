@@ -9,18 +9,19 @@ import {
   HttpStatus,
   HttpCode,
   Logger,
-  Req,Get,Delete,Patch,Param
+  Req,
+  Get,
+  Query,Patch,Param,Delete
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Types } from 'mongoose';
 import { I18nLang, I18nService } from 'nestjs-i18n';
-
-import { PropertyService,} from './property.service';
-import { AssetDocument } from './property.schema';
+import { ManagerJwtAuthGuard } from 'src/admin/AdminAuthguard';
+import { PropertyService } from './property.service';
 import { MerchantJwtAuthGuard } from 'src/merchant/merchantAuthGuard';
 import { CreateAssetDto } from './property.dto';
-import { ManagerJwtAuthGuard } from 'src/admin/AdminAuthguard';
+
 @Controller('merchant/properties')
 export class PropertyController {
   private readonly logger = new Logger(PropertyController.name);
@@ -30,59 +31,72 @@ export class PropertyController {
     private readonly i18n: I18nService,
   ) {}
 
- @Post()
-@HttpCode(HttpStatus.CREATED)
-@UseGuards(MerchantJwtAuthGuard)
-@UseInterceptors(
-  FilesInterceptor('images', 5, {
-    storage: memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 },
-    fileFilter: (req, file, callback) => {
-      if (!file.mimetype.match(/\/(jpg|jpeg|png|webp)$/)) {
-        return callback(new BadRequestException('Only image files are allowed!'), false);
-      }
-      callback(null, true);
-    },
-  }),
-)
-async create(
-  @Body() payload: CreateAssetDto,
-  @UploadedFiles() files: Array<Express.Multer.File>,
-  @Req() req: any,
-  @I18nLang() lang: string,
-) {
-  this.logger.log(`📥 Received request from Merchant: ${req.user?.sub}`);
+  // =====================================================
+  // 1️⃣ DEMAND PREVIEW ENDPOINT (CALL WHEN CATEGORY CHANGES)
+  // =====================================================
+  @Get('demand-preview')
+  @UseGuards(MerchantJwtAuthGuard)
+  async getDemandPreview(
+    @Query('category') category: string,
+  ) {
+    if (!category?.trim()) {
+      throw new BadRequestException('Category is required.');
+    }
 
-  if (!files?.length) {
-    throw new BadRequestException(
-      await this.i18n.translate('property.ERROR_IMAGE_REQUIRED', { lang }),
+    return this.propertyService.getPreUploadDemand(category);
+  }
+
+  // =====================================================
+  // 2️⃣ CREATE PROPERTY (FULL REGISTRATION)
+  // =====================================================
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(MerchantJwtAuthGuard)
+  @UseInterceptors(
+    FilesInterceptor('images', 5, {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (req, file, callback) => {
+        if (!file.mimetype.match(/\/(jpg|jpeg|png|webp)$/)) {
+          return callback(
+            new BadRequestException('Only image files are allowed!'),
+            false,
+          );
+        }
+        callback(null, true);
+      },
+    }),
+  )
+  async create(
+    @Body() payload: CreateAssetDto,
+    @UploadedFiles() files: Array<Express.Multer.File>,
+    @Req() req: any,
+    @I18nLang() lang: string,
+  ) {
+    this.logger.log(`📥 Merchant request: ${req.user?.sub}`);
+
+    if (!files?.length) {
+      throw new BadRequestException(
+        await this.i18n.translate('property.ERROR_IMAGE_REQUIRED', { lang }),
+      );
+    }
+
+    const merchantId = req.user?.sub;
+
+    if (!Types.ObjectId.isValid(merchantId)) {
+      throw new BadRequestException('Invalid authentication credentials.');
+    }
+
+    return this.propertyService.createProperty(
+      new Types.ObjectId(merchantId),
+      {
+        ...payload,
+        imageFiles: files,
+      },
+      lang,
     );
   }
 
-  const merchantId = req.user?.sub;
-  if (!Types.ObjectId.isValid(merchantId)) {
-    throw new BadRequestException('Invalid authentication credentials.');
-  }
-
-  // AI Demand prediction BEFORE creating property
-  const demand = await this.propertyService.getPreUploadDemand(payload.category);
-
-  // Pass demand info into payload (optional)
-  const enhancedPayload = {
-    ...payload,
-    demandScore: demand.predictedDemand,
-    demandLevel: demand.demandLevel,
-  };
-
- return this.propertyService.createProperty(
-  new Types.ObjectId(merchantId),
-  {
-    ...payload,
-    imageFiles: files,
-  },
-  lang,
-);
-}
 
 
  @Get('all')
