@@ -97,7 +97,12 @@ export class PropertyController {
     );
   }
 
-
+@Get('categories/search')
+async search(@Query('q') q: string) {
+  return {
+    categories: await this.propertyService.searchCategories(q),
+  };
+}
 
  @Get('all')
   @UseGuards(ManagerJwtAuthGuard)

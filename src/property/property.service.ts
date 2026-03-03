@@ -2,7 +2,7 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
-  ForbiddenException,NotFoundException,
+  ForbiddenException,NotFoundException
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -31,8 +31,7 @@ export interface ICreateAssetPayload {
 
 @Injectable()
 export class PropertyService {
-  private readonly AI_BASE_URL =
-    'https://ai-merchant-portal.onrender.com';
+  private readonly AI_BASE_URL = 'https://ai-merchant-portal.onrender.com';
 
   constructor(
     @InjectModel(Asset.name)
@@ -46,280 +45,266 @@ export class PropertyService {
     private readonly httpService: HttpService,
   ) {}
 
-  /**
-   * Normalize and reuse existing category if similar
-   */
-  private async findOrCreateCategory(
-    inputCategory: string,
-  ): Promise<string> {
+  // =========================================================
+  // CATEGORY NORMALIZATION (REUSE OR CREATE)
+  // =========================================================
+  private async findOrCreateCategory(inputCategory: string): Promise<string> {
     const normalized = inputCategory.trim().toLowerCase();
 
     const existingCategory = await this.assetModel.findOne({
-      category: { $regex: new RegExp(`^${normalized}`, 'i') },
+      category: { $regex: new RegExp(`^${normalized}$`, 'i') },
     });
 
-    return existingCategory
-      ? existingCategory.category
-      : normalized;
+    return existingCategory ? existingCategory.category : normalized;
   }
 
-  /**
-   * AI Image Validation
-   */
+  // =========================================================
+  // CATEGORY SEARCH (DYNAMIC SUGGESTIONS)
+  // =========================================================
+  async searchCategories(query: string): Promise<string[]> {
+    if (!query?.trim()) return [];
+
+    return this.assetModel.distinct('category', {
+      category: { $regex: new RegExp(query.trim(), 'i') },
+    });
+  }
+
+  // =========================================================
+  // AI IMAGE VALIDATION
+  // =========================================================
   async validateImageWithAI(image: Express.Multer.File) {
-  try {
-    const formData = new FormData();
-
-    formData.append('file', image.buffer, {
-      filename: image.originalname,
-      contentType: image.mimetype,
-    });
-
-    const headers = {
-      ...formData.getHeaders(),
-      'Content-Length': formData.getLengthSync(),
-    };
-
-    const response = await firstValueFrom(
-      this.httpService.post(
-        `${this.AI_BASE_URL}/validate-asset-image`,
-        formData,
-        {
-          headers,
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-           timeout: 90000,
-        },
-      ),
-    );
-
-    return response.data;
-
-  }catch (error) {
-  console.error('========= AI ERROR DEBUG =========');
-  console.error('Status:', error.response?.status);
-  console.error('Data:', error.response?.data);
-  console.error('Message:', error.message);
-  console.error('Stack:', error.stack);
-  console.error('==================================');
-
-  throw new BadRequestException(
-    error.response?.data || 'AI validation failed',
-  );
-}
-}
-
-  /**
-   * AI Demand Prediction
-   */
-  async getPreUploadDemand(category: string): Promise<{
-  predictedDemand: number;
-  demandLevel: string;
-  notification: string;
-  recommendedAction: string;
-}> {
-  try {
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
-        params: { category }, timeout: 90000,
-      }),
-    );
-
-    const data = response.data;
-
-    return {
-      predictedDemand: data.predicted_demand_value ?? 0,
-      demandLevel: data.demand_level ?? 'UNKNOWN',
-      notification: data.merchant_notification ?? '',
-      recommendedAction: data.recommended_action ?? '',
-    };
-  } catch (error) {
-    console.warn('AI demand service unavailable. Using default values.');
-
-    return {
-      predictedDemand: 0,
-      demandLevel: 'UNKNOWN',
-      notification: '',
-      recommendedAction: '',
-    };
-  }
-}
-
-  /**
-   * Create Property
-   */
-  async createProperty(
-  merchantId: Types.ObjectId,
-  assetPayload: ICreateAssetPayload,
-  lang: string,
-): Promise<{ message: string; asset: AssetDocument }> {
-  try {
-    const {
-      name,
-      description,
-      category,
-      location,
-      rentalPriceperday,
-      rentalPriceperhour,
-      rentalPriceperweek,
-      rentalPricepermonth,
-      rentalPriceperyear,
-      numberOfProperty,
-      imageFiles,
-    } = assetPayload;
-
-    // ================================
-    // 1️⃣ TRANSLATIONS (i18n)
-    // ================================
-    const notMerchantError = await this.i18n.translate(
-      'property.ERROR_NOT_MERCHANT',
-      { lang },
-    );
-
-    const successMessage = await this.i18n.translate(
-      'property.SUCCESS_PROPERTY_CREATED',
-      { lang },
-    );
-
-    const missingFieldsError = await this.i18n.translate(
-      'property.ERROR_REQUIRED_FIELDS',
-      { lang },
-    );
-
-    // ================================
-    // 2️⃣ MERCHANT VALIDATION
-    // ================================
-    const merchant = await this.userModel.findById(merchantId).exec();
-
-    if (!merchant || merchant.role !== UserRole.MERCHANT) {
-      throw new ForbiddenException(notMerchantError);
-    }
-
-    // ================================
-    // 3️⃣ REQUIRED FIELD VALIDATION
-    // ================================
-    if (!category?.trim() || !location?.trim()) {
-      throw new BadRequestException(missingFieldsError);
-    }
-
-    if (!imageFiles || imageFiles.length === 0) {
-      throw new BadRequestException(missingFieldsError);
-    }
-
-    const normalizedLocation = location.trim().toLowerCase();
-
-    const finalCategory = await this.findOrCreateCategory(category);
-
-    // ================================
-    // 4️⃣ AI IMAGE VALIDATION (FIRST IMAGE)
-    // ================================
-    const validation = await this.validateImageWithAI(imageFiles[0]);
-
-    if (!validation || validation.status !== 'success') {
-      throw new InternalServerErrorException(
-        'AI validation service failed.',
-      );
-    }
-
-    if (validation.allowed_upload === false) {
-      throw new BadRequestException({
-        message: 'AI detected invalid image. Registration failed.',
-        prediction: validation.prediction,
-        confidence: validation.confidence,
-      });
-    }
-
-    // ================================
-    // 5️⃣ AI DEMAND PREDICTION
-    // ================================
-    let demandPrediction;
-
     try {
-      demandPrediction = await this.getPreUploadDemand(finalCategory);
-    } catch (error) {
-      console.warn(
-        'AI demand service unavailable. Using default values.',
+      const formData = new FormData();
+
+      formData.append('file', image.buffer, {
+        filename: image.originalname,
+        contentType: image.mimetype,
+      });
+
+      const headers = {
+        ...formData.getHeaders(),
+        'Content-Length': formData.getLengthSync(),
+      };
+
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${this.AI_BASE_URL}/validate-asset-image`,
+          formData,
+          {
+            headers,
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+            timeout: 90000,
+          },
+        ),
       );
 
-      demandPrediction = {
+      return response.data;
+    } catch (error) {
+      console.error('AI validation error:', error.message);
+
+      throw new BadRequestException(
+        error.response?.data || 'AI validation failed',
+      );
+    }
+  }
+
+  // =========================================================
+  // AI DEMAND PREDICTION
+  // =========================================================
+  async getPreUploadDemand(category: string) {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
+          params: { category },
+          timeout: 90000,
+        }),
+      );
+
+      const data = response.data;
+
+      return {
+        predictedDemand: data.predicted_demand_value ?? 0,
+        demandLevel: data.demand_level ?? 'UNKNOWN',
+        notification: data.merchant_notification ?? '',
+        recommendedAction: data.recommended_action ?? '',
+      };
+    } catch (error) {
+      console.warn('AI demand service unavailable.');
+
+      return {
         predictedDemand: 0,
         demandLevel: 'UNKNOWN',
         notification: '',
         recommendedAction: '',
       };
     }
-
-    // ================================
-    // 6️⃣ UPLOAD IMAGES TO CLOUDINARY
-    // ================================
-    let imageUrls: string[] = [];
-
-    try {
-      const uploadPromises = imageFiles.map((file) =>
-        this.cloudinaryService.uploadImage(file, 'property-images'),
-      );
-
-      imageUrls = await Promise.all(uploadPromises);
-    } catch (error) {
-      throw new InternalServerErrorException(
-        'Failed to upload images to Cloudinary.',
-      );
-    }
-
-    // ================================
-    // 7️⃣ CREATE MONGODB DOCUMENT
-    // ================================
-    const newAsset = new this.assetModel({
-      merchant: merchantId,
-      name,
-      description,
-      category: finalCategory,
-      location: normalizedLocation,
-      rentalPriceperday,
-      rentalPriceperhour,
-      rentalPriceperweek,
-      rentalPricepermonth,
-      rentalPriceperyear,
-      numberOfProperty,
-      imageUrls,
-      status: AssetStatus.AVAILABLE,
-
-      // AI Demand Data
-      demandScore: demandPrediction.predictedDemand,
-      monthlyEstimatedIncome: 0,
-    });
-
-    await newAsset.save();
-
-    // Populate merchant data
-    const populatedAsset = await newAsset.populate(
-      'merchant',
-      'fullName email phonenumber businessName accountnumber',
-    );
-
-    // ================================
-    // 8️⃣ SUCCESS RESPONSE
-    // ================================
-    return {
-      message: successMessage,
-      asset: populatedAsset,
-    };
-  } catch (error) {
-    console.error('❌ Property creation error:', error);
-
-    if (
-      error instanceof BadRequestException ||
-      error instanceof ForbiddenException ||
-      error instanceof InternalServerErrorException
-    ) {
-      throw error;
-    }
-
-    throw new InternalServerErrorException(
-      'Property creation failed.',
-    );
   }
-}
+
+  // =========================================================
+  // CREATE PROPERTY
+  // =========================================================
+  async createProperty(
+    merchantId: Types.ObjectId,
+    assetPayload: ICreateAssetPayload,
+    lang: string,
+  ) {
+    try {
+      const {
+        name,
+        description,
+        category,
+        location,
+        rentalPriceperday,
+        rentalPriceperhour,
+        rentalPriceperweek,
+        rentalPricepermonth,
+        rentalPriceperyear,
+        numberOfProperty,
+        imageFiles,
+      } = assetPayload;
+
+      const notMerchantError = await this.i18n.translate(
+        'property.ERROR_NOT_MERCHANT',
+        { lang },
+      );
+
+      const successMessage = await this.i18n.translate(
+        'property.SUCCESS_PROPERTY_CREATED',
+        { lang },
+      );
+
+      const missingFieldsError = await this.i18n.translate(
+        'property.ERROR_REQUIRED_FIELDS',
+        { lang },
+      );
+
+      // =====================================================
+      // MERCHANT VALIDATION
+      // =====================================================
+      const merchant = await this.userModel.findById(merchantId).exec();
+
+      if (!merchant || merchant.role !== UserRole.MERCHANT) {
+        throw new ForbiddenException(notMerchantError);
+      }
+
+      // =====================================================
+      // REQUIRED FIELD VALIDATION
+      // =====================================================
+      if (!category?.trim() || !location?.trim()) {
+        throw new BadRequestException(missingFieldsError);
+      }
+
+      if (!imageFiles || imageFiles.length === 0) {
+        throw new BadRequestException(missingFieldsError);
+      }
+
+      const normalizedLocation = location.trim().toLowerCase();
+
+      // CATEGORY NORMALIZATION (NO HARDCODING)
+      const finalCategory = await this.findOrCreateCategory(category);
+
+      // =====================================================
+      // AI IMAGE VALIDATION
+      // =====================================================
+      const validation = await this.validateImageWithAI(imageFiles[0]);
+
+      if (!validation || validation.status !== 'success') {
+        throw new InternalServerErrorException('AI validation failed.');
+      }
+
+      if (validation.allowed_upload === false) {
+        throw new BadRequestException({
+          message: 'AI detected invalid image. Registration failed.',
+          prediction: validation.prediction,
+          confidence: validation.confidence,
+        });
+      }
+
+      // =====================================================
+      // AI DEMAND PREDICTION
+      // =====================================================
+      let demandPrediction;
+
+      try {
+        demandPrediction = await this.getPreUploadDemand(finalCategory);
+      } catch {
+        demandPrediction = {
+          predictedDemand: 0,
+          demandLevel: 'UNKNOWN',
+          notification: '',
+          recommendedAction: '',
+        };
+      }
+
+      // =====================================================
+      // UPLOAD IMAGES TO CLOUDINARY
+      // =====================================================
+      let imageUrls: string[] = [];
+
+      try {
+        const uploadPromises = imageFiles.map((file) =>
+          this.cloudinaryService.uploadImage(file, 'property-images'),
+        );
+
+        imageUrls = await Promise.all(uploadPromises);
+      } catch {
+        throw new InternalServerErrorException(
+          'Failed to upload images to Cloudinary.',
+        );
+      }
+
+      // =====================================================
+      // CREATE MONGODB DOCUMENT
+      // =====================================================
+      const newAsset = new this.assetModel({
+        merchant: merchantId,
+        name,
+        description,
+        category: finalCategory,
+        location: normalizedLocation,
+        rentalPriceperday,
+        rentalPriceperhour,
+        rentalPriceperweek,
+        rentalPricepermonth,
+        rentalPriceperyear,
+        numberOfProperty,
+        imageUrls,
+        status: AssetStatus.AVAILABLE,
+
+        // AI Demand Data
+        demandScore: demandPrediction.predictedDemand,
+        monthlyEstimatedIncome: 0,
+      });
+
+      await newAsset.save();
+
+      const populatedAsset = await newAsset.populate(
+        'merchant',
+        'fullName email phonenumber businessName accountnumber',
+      );
+
+      return {
+        message: successMessage,
+        asset: populatedAsset,
+      };
+    } catch (error) {
+      console.error('Property creation error:', error);
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException ||
+        error instanceof InternalServerErrorException
+      ) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(
+        'Property creation failed.',
+      );
+    }
+  }
+
 
 // ===========================================================
 // GET ALL PROPERTIES (MANAGER)
