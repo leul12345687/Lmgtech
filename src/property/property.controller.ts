@@ -31,20 +31,6 @@ export class PropertyController {
     private readonly i18n: I18nService,
   ) {}
 
-  // =====================================================
-  // 1️⃣ DEMAND PREVIEW ENDPOINT (CALL WHEN CATEGORY CHANGES)
-  // =====================================================
-  @Get('demand-preview')
-  @UseGuards(MerchantJwtAuthGuard)
-  async getDemandPreview(
-    @Query('category') category: string,
-  ) {
-    if (!category?.trim()) {
-      throw new BadRequestException('Category is required.');
-    }
-
-    return this.propertyService.getPreUploadDemand(category);
-  }
 
   // =====================================================
   // 2️⃣ CREATE PROPERTY (FULL REGISTRATION)
