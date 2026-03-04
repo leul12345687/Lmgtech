@@ -69,25 +69,47 @@ export class PropertyService {
     });
   }
 // =========================================================
-// WAKE AI SERVICE
+// WAKE AI SERVICE (ROBUST VERSION)
 // =========================================================
-private async wakeAI() {
-  try {
-    await firstValueFrom(
-      this.httpService.get(`${this.AI_BASE_URL}/health`, {
-        timeout: 60000,
-      }),
-    );
-    console.log('AI service is awake');
-  } catch (error) {
-    console.log('AI wake attempt triggered');
+private async wakeAIWithRetry() {
+  const maxAttempts = 6;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`🔄 Waking AI (attempt ${attempt})`);
+
+      await firstValueFrom(
+        this.httpService.get(`${this.AI_BASE_URL}/health`, {
+          timeout: 60000,
+        }),
+      );
+
+      console.log('✅ AI service is fully awake');
+      return;
+    } catch (error: any) {
+      const status = error?.response?.status;
+
+      console.warn(
+        `⚠️ Wake attempt ${attempt} failed. Status: ${status || 'unknown'}`
+      );
+
+      if (attempt === maxAttempts) {
+        throw new InternalServerErrorException(
+          'AI service unavailable after multiple attempts.',
+        );
+      }
+
+      // If 502 → container still booting
+      // Wait 15 seconds before retry
+      await new Promise((res) => setTimeout(res, 15000));
+    }
   }
 }
   // =========================================================
   // AI IMAGE VALIDATION
   // =========================================================
   async validateImageWithAI(image: Express.Multer.File) {
-  await this.wakeAI(); // 🔥 wake before validation
+  await this.wakeAIWithRetry(); // 🔥 wake before validation
 
   const formData = new FormData();
 
@@ -133,7 +155,7 @@ private async wakeAI() {
 }
 
   async getPreUploadDemand(category: string) {
-  await this.wakeAI(); // wake first
+  await this.wakeAIWithRetry(); // wake first
 
   try {
     const response = await firstValueFrom(
