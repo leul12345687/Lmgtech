@@ -21,16 +21,30 @@ import { ManagerJwtAuthGuard } from 'src/admin/AdminAuthguard';
 import { PropertyService } from './property.service';
 import { MerchantJwtAuthGuard } from 'src/merchant/merchantAuthGuard';
 import { CreateAssetDto } from './property.dto';
-
+import { AiService } from 'src/ai/ai.service';
 @Controller('merchant/properties')
 export class PropertyController {
   private readonly logger = new Logger(PropertyController.name);
 
   constructor(
     private readonly propertyService: PropertyService,
+    private readonly aiService: AiService,   // ✅ ADD THIS
     private readonly i18n: I18nService,
   ) {}
 
+  // =====================================================
+  // 1️⃣ DEMAND PREVIEW ENDPOINT (CALL WHEN CATEGORY CHANGES)
+  // =====================================================
+  @Get('demand-preview')
+  @UseGuards(MerchantJwtAuthGuard)
+  async getDemandPreview(
+    @Query('category') category: string,
+  ) {
+    if (!category?.trim()) {
+      throw new BadRequestException('Category is required.');
+    }
+     return this.aiService.getDemand(category);
+  }
 
   // =====================================================
   // 2️⃣ CREATE PROPERTY (FULL REGISTRATION)
