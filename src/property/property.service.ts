@@ -68,24 +68,41 @@ export class PropertyService {
       category: { $regex: new RegExp(query.trim(), 'i') },
     });
   }
-
+// =========================================================
+// WAKE AI SERVICE
+// =========================================================
+private async wakeAI() {
+  try {
+    await firstValueFrom(
+      this.httpService.get(`${this.AI_BASE_URL}/health`, {
+        timeout: 60000,
+      }),
+    );
+    console.log('AI service is awake');
+  } catch (error) {
+    console.log('AI wake attempt triggered');
+  }
+}
   // =========================================================
   // AI IMAGE VALIDATION
   // =========================================================
   async validateImageWithAI(image: Express.Multer.File) {
+  await this.wakeAI(); // 🔥 wake before validation
+
+  const formData = new FormData();
+
+  formData.append('file', image.buffer, {
+    filename: image.originalname,
+    contentType: image.mimetype,
+  });
+
+  const headers = {
+    ...formData.getHeaders(),
+  };
+
+  // Retry logic (3 attempts)
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const formData = new FormData();
-
-      formData.append('file', image.buffer, {
-        filename: image.originalname,
-        contentType: image.mimetype,
-      });
-
-      const headers = {
-        ...formData.getHeaders(),
-        'Content-Length': formData.getLengthSync(),
-      };
-
       const response = await firstValueFrom(
         this.httpService.post(
           `${this.AI_BASE_URL}/validate-asset-image`,
@@ -94,53 +111,57 @@ export class PropertyService {
             headers,
             maxBodyLength: Infinity,
             maxContentLength: Infinity,
-            timeout: 90000,
+            timeout: 120000, // 2 minutes
           },
         ),
       );
 
       return response.data;
     } catch (error) {
-      console.error('AI validation error:', error.message);
+      console.warn(`AI validation attempt ${attempt} failed`);
 
-      throw new BadRequestException(
-        error.response?.data || 'AI validation failed',
-      );
+      if (attempt === 3) {
+        throw new BadRequestException(
+          error.response?.data || 'AI validation failed after retries',
+        );
+      }
+
+      // wait 5 seconds before retry
+      await new Promise((res) => setTimeout(res, 5000));
     }
   }
+}
 
-  // =========================================================
-  // AI DEMAND PREDICTION
-  // =========================================================
   async getPreUploadDemand(category: string) {
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
-          params: { category },
-          timeout: 90000,
-        }),
-      );
+  await this.wakeAI(); // wake first
 
-      const data = response.data;
+  try {
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
+        params: { category },
+        timeout: 120000,
+      }),
+    );
 
-      return {
-        predictedDemand: data.predicted_demand_value ?? 0,
-        demandLevel: data.demand_level ?? 'UNKNOWN',
-        notification: data.merchant_notification ?? '',
-        recommendedAction: data.recommended_action ?? '',
-      };
-    } catch (error) {
-      console.warn('AI demand service unavailable.');
+    const data = response.data;
 
-      return {
-        predictedDemand: 0,
-        demandLevel: 'UNKNOWN',
-        notification: '',
-        recommendedAction: '',
-      };
-    }
+    return {
+      predictedDemand: data.predicted_demand_value ?? 0,
+      demandLevel: data.demand_level ?? 'UNKNOWN',
+      notification: data.merchant_notification ?? '',
+      recommendedAction: data.recommended_action ?? '',
+    };
+  } catch (error) {
+    console.warn('AI demand service unavailable.');
+
+    return {
+      predictedDemand: 0,
+      demandLevel: 'UNKNOWN',
+      notification: '',
+      recommendedAction: '',
+    };
   }
-
+}
   // =========================================================
   // CREATE PROPERTY
   // =========================================================
@@ -383,7 +404,4 @@ async deletePropertyByManager(propertyId: Types.ObjectId, lang: string) {
     propertyId,
   };
 }
-
-
-
 }
