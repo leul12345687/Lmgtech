@@ -7,10 +7,8 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { I18nService } from 'nestjs-i18n';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
-import FormData from 'form-data';
 
+import { AiService } from '../ai/ai.service';
 import { Asset, AssetDocument, AssetStatus } from './property.schema';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -25,14 +23,13 @@ export interface ICreateAssetPayload {
   rentalPriceperweek: number;
   rentalPricepermonth: number;
   rentalPriceperyear: number;
+
   numberOfProperty: number;
   imageFiles: Express.Multer.File[];
 }
 
 @Injectable()
 export class PropertyService {
-  private readonly AI_BASE_URL = 'https://ai-merchant-portal.onrender.com';
-
   constructor(
     @InjectModel(Asset.name)
     private readonly assetModel: Model<AssetDocument>,
@@ -40,13 +37,13 @@ export class PropertyService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
 
+    private readonly aiService: AiService,
     private readonly i18n: I18nService,
     private readonly cloudinaryService: CloudinaryService,
-    private readonly httpService: HttpService,
   ) {}
 
   // =========================================================
-  // CATEGORY NORMALIZATION (REUSE OR CREATE)
+  // CATEGORY NORMALIZATION
   // =========================================================
   private async findOrCreateCategory(inputCategory: string): Promise<string> {
     const normalized = inputCategory.trim().toLowerCase();
@@ -59,7 +56,7 @@ export class PropertyService {
   }
 
   // =========================================================
-  // CATEGORY SEARCH (DYNAMIC SUGGESTIONS)
+  // CATEGORY SEARCH
   // =========================================================
   async searchCategories(query: string): Promise<string[]> {
     if (!query?.trim()) return [];
@@ -68,122 +65,7 @@ export class PropertyService {
       category: { $regex: new RegExp(query.trim(), 'i') },
     });
   }
-// =========================================================
-// WAKE AI SERVICE (ROBUST VERSION)
-// =========================================================
-private async wakeAIWithRetry() {
-  const maxAttempts = 6;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      console.log(`🔄 Waking AI (attempt ${attempt})`);
-
-      await firstValueFrom(
-        this.httpService.get(`${this.AI_BASE_URL}/health`, {
-          timeout: 60000,
-        }),
-      );
-
-      console.log('✅ AI service is fully awake');
-      return;
-    } catch (error: any) {
-      const status = error?.response?.status;
-
-      console.warn(
-        `⚠️ Wake attempt ${attempt} failed. Status: ${status || 'unknown'}`
-      );
-
-      if (attempt === maxAttempts) {
-        throw new InternalServerErrorException(
-          'AI service unavailable after multiple attempts.',
-        );
-      }
-
-      // If 502 → container still booting
-      // Wait 15 seconds before retry
-      await new Promise((res) => setTimeout(res, 15000));
-    }
-  }
-}
-  // =========================================================
-  // AI IMAGE VALIDATION
-  // =========================================================
-  async validateImageWithAI(image: Express.Multer.File) {
-  await this.wakeAIWithRetry(); // 🔥 wake before validation
-
-  const formData = new FormData();
-
-  formData.append('file', image.buffer, {
-    filename: image.originalname,
-    contentType: image.mimetype,
-  });
-
-  const headers = {
-    ...formData.getHeaders(),
-  };
-
-  // Retry logic (3 attempts)
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(
-          `${this.AI_BASE_URL}/validate-asset-image`,
-          formData,
-          {
-            headers,
-            maxBodyLength: Infinity,
-            maxContentLength: Infinity,
-            timeout: 120000, // 2 minutes
-          },
-        ),
-      );
-
-      return response.data;
-    } catch (error) {
-      console.warn(`AI validation attempt ${attempt} failed`);
-
-      if (attempt === 3) {
-        throw new BadRequestException(
-          error.response?.data || 'AI validation failed after retries',
-        );
-      }
-
-      // wait 5 seconds before retry
-      await new Promise((res) => setTimeout(res, 5000));
-    }
-  }
-}
-
-  async getPreUploadDemand(category: string) {
-  await this.wakeAIWithRetry(); // wake first
-
-  try {
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
-        params: { category },
-        timeout: 120000,
-      }),
-    );
-
-    const data = response.data;
-
-    return {
-      predictedDemand: data.predicted_demand_value ?? 0,
-      demandLevel: data.demand_level ?? 'UNKNOWN',
-      notification: data.merchant_notification ?? '',
-      recommendedAction: data.recommended_action ?? '',
-    };
-  } catch (error) {
-    console.warn('AI demand service unavailable.');
-
-    return {
-      predictedDemand: 0,
-      demandLevel: 'UNKNOWN',
-      notification: '',
-      recommendedAction: '',
-    };
-  }
-}
   // =========================================================
   // CREATE PROPERTY
   // =========================================================
@@ -192,162 +74,155 @@ private async wakeAIWithRetry() {
     assetPayload: ICreateAssetPayload,
     lang: string,
   ) {
+    const {
+      name,
+      description,
+      category,
+      location,
+      rentalPriceperday,
+      rentalPriceperhour,
+      rentalPriceperweek,
+      rentalPricepermonth,
+      rentalPriceperyear,
+      numberOfProperty,
+      imageFiles,
+    } = assetPayload;
+
+    // ==============================
+    // TRANSLATIONS
+    // ==============================
+    const notMerchantError = await this.i18n.translate(
+      'property.ERROR_NOT_MERCHANT',
+      { lang },
+    );
+
+    const successMessage = await this.i18n.translate(
+      'property.SUCCESS_PROPERTY_CREATED',
+      { lang },
+    );
+
+    const missingFieldsError = await this.i18n.translate(
+      'property.ERROR_REQUIRED_FIELDS',
+      { lang },
+    );
+
+    // ==============================
+    // MERCHANT VALIDATION
+    // ==============================
+    const merchant = await this.userModel.findById(merchantId);
+
+    if (!merchant || merchant.role !== UserRole.MERCHANT) {
+      throw new ForbiddenException(notMerchantError);
+    }
+
+    // ==============================
+    // REQUIRED FIELD VALIDATION
+    // ==============================
+    if (!category?.trim() || !location?.trim()) {
+      throw new BadRequestException(missingFieldsError);
+    }
+
+    if (!imageFiles?.length) {
+      throw new BadRequestException(missingFieldsError);
+    }
+
+    const normalizedLocation = location.trim().toLowerCase();
+    const finalCategory = await this.findOrCreateCategory(category);
+
+    // ==============================
+    // AI IMAGE VALIDATION
+    // ==============================
+    let validation;
     try {
-      const {
-        name,
-        description,
-        category,
-        location,
-        rentalPriceperday,
-        rentalPriceperhour,
-        rentalPriceperweek,
-        rentalPricepermonth,
-        rentalPriceperyear,
-        numberOfProperty,
-        imageFiles,
-      } = assetPayload;
-
-      const notMerchantError = await this.i18n.translate(
-        'property.ERROR_NOT_MERCHANT',
-        { lang },
-      );
-
-      const successMessage = await this.i18n.translate(
-        'property.SUCCESS_PROPERTY_CREATED',
-        { lang },
-      );
-
-      const missingFieldsError = await this.i18n.translate(
-        'property.ERROR_REQUIRED_FIELDS',
-        { lang },
-      );
-
-      // =====================================================
-      // MERCHANT VALIDATION
-      // =====================================================
-      const merchant = await this.userModel.findById(merchantId).exec();
-
-      if (!merchant || merchant.role !== UserRole.MERCHANT) {
-        throw new ForbiddenException(notMerchantError);
-      }
-
-      // =====================================================
-      // REQUIRED FIELD VALIDATION
-      // =====================================================
-      if (!category?.trim() || !location?.trim()) {
-        throw new BadRequestException(missingFieldsError);
-      }
-
-      if (!imageFiles || imageFiles.length === 0) {
-        throw new BadRequestException(missingFieldsError);
-      }
-
-      const normalizedLocation = location.trim().toLowerCase();
-
-      // CATEGORY NORMALIZATION (NO HARDCODING)
-      const finalCategory = await this.findOrCreateCategory(category);
-
-      // =====================================================
-      // AI IMAGE VALIDATION
-      // =====================================================
-      const validation = await this.validateImageWithAI(imageFiles[0]);
-
-      if (!validation || validation.status !== 'success') {
-        throw new InternalServerErrorException('AI validation failed.');
-      }
-
-      if (validation.allowed_upload === false) {
-        throw new BadRequestException({
-          message: 'AI detected invalid image. Registration failed.',
-          prediction: validation.prediction,
-          confidence: validation.confidence,
-        });
-      }
-
-      // =====================================================
-      // AI DEMAND PREDICTION
-      // =====================================================
-      let demandPrediction;
-
-      try {
-        demandPrediction = await this.getPreUploadDemand(finalCategory);
-      } catch {
-        demandPrediction = {
-          predictedDemand: 0,
-          demandLevel: 'UNKNOWN',
-          notification: '',
-          recommendedAction: '',
-        };
-      }
-
-      // =====================================================
-      // UPLOAD IMAGES TO CLOUDINARY
-      // =====================================================
-      let imageUrls: string[] = [];
-
-      try {
-        const uploadPromises = imageFiles.map((file) =>
-          this.cloudinaryService.uploadImage(file, 'property-images'),
-        );
-
-        imageUrls = await Promise.all(uploadPromises);
-      } catch {
-        throw new InternalServerErrorException(
-          'Failed to upload images to Cloudinary.',
-        );
-      }
-
-      // =====================================================
-      // CREATE MONGODB DOCUMENT
-      // =====================================================
-      const newAsset = new this.assetModel({
-        merchant: merchantId,
-        name,
-        description,
-        category: finalCategory,
-        location: normalizedLocation,
-        rentalPriceperday,
-        rentalPriceperhour,
-        rentalPriceperweek,
-        rentalPricepermonth,
-        rentalPriceperyear,
-        numberOfProperty,
-        imageUrls,
-        status: AssetStatus.AVAILABLE,
-
-        // AI Demand Data
-        demandScore: demandPrediction.predictedDemand,
-        monthlyEstimatedIncome: 0,
-      });
-
-      await newAsset.save();
-
-      const populatedAsset = await newAsset.populate(
-        'merchant',
-        'fullName email phonenumber businessName accountnumber',
-      );
-
-      return {
-        message: successMessage,
-        asset: populatedAsset,
-      };
+      validation = await this.aiService.validateImage(imageFiles[0]);
     } catch (error) {
-      console.error('Property creation error:', error);
-
-      if (
-        error instanceof BadRequestException ||
-        error instanceof ForbiddenException ||
-        error instanceof InternalServerErrorException
-      ) {
-        throw error;
-      }
-
       throw new InternalServerErrorException(
-        'Property creation failed.',
+        'AI image validation service unavailable.',
       );
     }
-  }
 
+    if (!validation || validation.status !== 'success') {
+      throw new InternalServerErrorException(
+        'AI validation failed unexpectedly.',
+      );
+    }
+
+    if (validation.allowed_upload === false) {
+      throw new BadRequestException({
+        message: 'AI detected invalid image.',
+        prediction: validation.prediction,
+        confidence: validation.confidence,
+      });
+    }
+
+    // ==============================
+    // AI DEMAND PREDICTION (SAFE)
+    // ==============================
+    let demandPrediction = {
+      predictedDemand: 0,
+      demandLevel: 'UNKNOWN',
+      notification: '',
+      recommendedAction: '',
+    };
+
+    try {
+      demandPrediction = await this.aiService.getDemand(finalCategory);
+    } catch {
+      // Do NOT block property creation if demand fails
+      console.warn('AI demand service unavailable. Using fallback.');
+    }
+
+    // ==============================
+    // CLOUDINARY UPLOAD
+    // ==============================
+    let imageUrls: string[];
+
+    try {
+      const uploads = imageFiles.map((file) =>
+        this.cloudinaryService.uploadImage(file, 'property-images'),
+      );
+
+      imageUrls = await Promise.all(uploads);
+    } catch {
+      throw new InternalServerErrorException(
+        'Image upload failed.',
+      );
+    }
+
+    // ==============================
+    // CREATE DATABASE RECORD
+    // ==============================
+    const newAsset = new this.assetModel({
+      merchant: merchantId,
+      name,
+      description,
+      category: finalCategory,
+      location: normalizedLocation,
+      rentalPriceperday,
+      rentalPriceperhour,
+      rentalPriceperweek,
+      rentalPricepermonth,
+      rentalPriceperyear,
+      numberOfProperty,
+      imageUrls,
+      status: AssetStatus.AVAILABLE,
+      demandScore: demandPrediction.predictedDemand,
+      monthlyEstimatedIncome: 0,
+    });
+
+    await newAsset.save();
+
+    const populatedAsset = await newAsset.populate(
+      'merchant',
+      'fullName email phonenumber businessName accountnumber',
+    );
+
+    return {
+      message: successMessage,
+      asset: populatedAsset,
+      demandInfo: demandPrediction,
+    };
+  }
 
 // ===========================================================
 // GET ALL PROPERTIES (MANAGER)

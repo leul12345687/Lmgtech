@@ -23,6 +23,7 @@ import { BankingModule } from './banking/banking.module';
 import { ChapaModule } from './chapa/chapa.module';
 
 import { AiIncomeInfoModule } from './ai_income-info/ai_income-info.module';
+import { AiModule } from './ai/ai.module';
 
 import * as path from 'path';
 
@@ -81,9 +82,10 @@ import * as path from 'path';
     ProfileModule,
     BankingModule,
     ChapaModule,
-    AiIncomeInfoModule ,   // ✅ VERY IMPORTANT
+    AiIncomeInfoModule,
+    AiModule ,   // ✅ VERY IMPORTANT
   ],
   controllers: [AppController, BankingController,  ],
-  providers: [AppService, BankingService,  ],
+  providers: [AppService, BankingService,],
 })
 export class AppModule {}
