@@ -65,17 +65,25 @@ export class AiService implements OnModuleInit {
     return response.data;
   }
 
-  // ==============================
-  // DEMAND PREDICTION
-  // ==============================
-  async getDemand(category: string) {
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
-        params: { category },
-        timeout: 120000,
-      }),
-    );
+// ==============================
+// DEMAND PREDICTION
+// ==============================
+async getDemand(category: string) {
+  const response = await firstValueFrom(
+    this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
+      params: { category },
+      timeout: 120000,
+    }),
+  );
 
-    return response.data;
-  }
-}
+  const aiData = response.data;
+
+  return {
+    category: aiData.category,
+    demandLevel: aiData.demand_level,
+    predictedDemand: aiData.predicted_demand_value,
+    recommendedAction: aiData.recommended_action,
+    merchantNotification: aiData.merchant_notification,
+    featureSnapshot: aiData.feature_snapshot,
+  };
+}}

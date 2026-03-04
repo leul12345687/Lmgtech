@@ -161,7 +161,7 @@ export class PropertyService {
     let demandPrediction = {
       predictedDemand: 0,
       demandLevel: 'UNKNOWN',
-      notification: '',
+      
       recommendedAction: '',
     };
 
