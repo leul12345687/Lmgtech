@@ -11,16 +11,17 @@ import {
   Query,
   UseGuards,
   Get,
-  Param,Logger,Put,Delete
+  Param,Logger,Put,Delete,Req
 } from '@nestjs/common';
+import { AiService } from '../ai_income-info/ai_income-info.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MerchantService } from './merchant.service';
 import { ManagerJwtAuthGuard } from 'src/admin/AdminAuthguard';
-
+import { MerchantJwtAuthGuard } from './merchantAuthGuard';
 @Controller('merchant')
 export class MerchantController {
-  private readonly logger = new Logger(MerchantController.name);
-
+  private readonly logger = new Logger(MerchantController.name)
+  private readonly aiService: AiService;
   constructor(private readonly merchantService: MerchantService) {}
 
   // ===========================================================
@@ -73,7 +74,24 @@ export class MerchantController {
       throw error;
     }
   }
+  
+// ===========================================================
+// 💰 GET MERCHANT FINANCIAL INFO
+// ===========================================================
+@Get('financial-info')
+@UseGuards(MerchantJwtAuthGuard)
+async getFinancialInfo(@Req() req: any) {
+  const merchantId = req.user.userId; // from JWT payload
 
+  const financialInfo = await this.aiService.getMerchantIncome(
+    merchantId,
+  );
+
+  return {
+    success: true,
+    financialInfo,
+  };
+}
   // ===========================================================
   // 🟣 FETCH ALL MERCHANTS
   // ===========================================================

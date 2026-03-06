@@ -1,85 +1,96 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import FormData from 'form-data';
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
-  private readonly AI_BASE_URL = process.env.AI_BASE_URL;
+  private AI_BASE_URl: string;
 
   constructor(private readonly httpService: HttpService) {}
 
-  // ==========================================
-  // 🟢 Merchant Financial Information
-  // ==========================================
-  async getMerchantIncome(merchantId: string) {
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(
-          `${this.AI_BASE_URL}/merchant-income/${merchantId}`,
-        ),
-      );
+  // ===================================================
+  // 🚀 Run When Module Initializes
+  // ===================================================
+  async onModuleInit() {
+  const baseUrl = process.env.AI_BASE_URl;
 
-      return response.data;
-    } catch (error) {
-      this.logger.error(
-        `AI Income Service Error: ${error.message}`,
-      );
-      return null;
-    }
+  if (!baseUrl) {
+    throw new Error('AI_BASE_URL is not defined in environment variables');
   }
 
-  // ==========================================
-  // 🟢 Pre Upload Demand Prediction
-  // ==========================================
-  async getPreUploadDemand(category: string) {
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(
-          `${this.AI_BASE_URL}/pre-upload-demand`,
-          {
-            params: { category },
-          },
-        ),
-      );
+  this.AI_BASE_URL = baseUrl;
 
-      return response.data;
+  this.logger.log(`AI Service initialized with base URL: ${this.AI_BASE_URl}`);
+
+    // Optional: Test AI connection at startup
+    try {
+      await firstValueFrom(
+        this.httpService.get(`${this.AI_BASE_URL}/health`, {
+          timeout: 5000,
+        }),
+      );
+      this.logger.log('AI service connection successful');
     } catch (error) {
       this.logger.warn(
-        'AI Demand Service unavailable. Returning null.',
+        'AI service is not reachable during startup. Continuing...',
       );
-      return null;
     }
   }
 
-  // ==========================================
-  // 🟢 AI Image Validation
-  // ==========================================
-  async validateAssetImage(image: Express.Multer.File) {
+  // ===================================================
+  // 💰 Merchant Financial Information
+  // ===================================================
+  async getMerchantIncome(merchantId: string) {
     try {
-      const formData = new FormData();
-      formData.append('file', image.buffer, {
-        filename: image.originalname,
-        contentType: image.mimetype,
-      });
+      this.logger.log(
+        `Fetching AI financial data for merchant: ${merchantId}`,
+      );
 
       const response = await firstValueFrom(
-        this.httpService.post(
-          `${this.AI_BASE_URL}/validate-asset-image`,
-          formData,
+        this.httpService.get(
+          `${this.AI_BASE_URl}/merchant-income/${merchantId}`,
           {
-            headers: formData.getHeaders(),
+            timeout: 120000,
           },
         ),
       );
 
-      return response.data;
+      const aiData = response.data;
+
+      if (!aiData || aiData.status !== 'success') {
+        this.logger.warn(
+          `AI returned unsuccessful response for merchant ${merchantId}`,
+        );
+        return null;
+      }
+
+      // 🔄 Normalize response (snake_case → camelCase)
+      return {
+        monthlyIncome: aiData.monthly_income,
+        projectedCurrentMonth: aiData.projected_current_month,
+        historicalMonthlyAverage: aiData.historical_monthly_average,
+        trendSlope: aiData.trend_slope,
+        yearlyIncome: aiData.yearly_income,
+        predictedNextMonth: aiData.predicted_next_month,
+        estimatedTaxYear: aiData.estimated_tax_year,
+        profitAfterTax: aiData.profit_after_tax,
+        monthsUsedForLearning: aiData.months_used_for_learning,
+      };
     } catch (error) {
       this.logger.error(
-        `AI Image Validation Error: ${error.message}`,
+        `AI Income Service Error for merchant ${merchantId}: ${error.message}`,
+        error.stack,
       );
-      throw new Error('AI image validation failed');
+
+      throw new InternalServerErrorException(
+        'Failed to retrieve financial information from AI service',
+      );
     }
   }
 }

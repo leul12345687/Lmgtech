@@ -193,17 +193,6 @@ export class MerchantService {
       // 🎟 Generate JWT
       const token = this.generateToken(merchant._id, merchant.role);
 
-      // 💰 Fetch Financial Info from AI Service
-      let financialInfo = null;
-      try {
-        financialInfo = await this.aiService.getMerchantIncome(
-          merchant._id.toString(),
-        );
-      } catch (aiError) {
-        this.logger.warn(
-          `AI financial service failed for merchant ${merchant._id}`,
-        );
-      }
 
       this.logger.log(`Merchant login successful: ${email}`);
 
@@ -221,7 +210,7 @@ export class MerchantService {
           profilePictureUrl: merchant.profilePictureUrl,
           role: merchant.role,
         },
-        financialInfo,
+        
       };
     } catch (error) {
       this.logger.error(
