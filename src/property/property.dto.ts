@@ -1,21 +1,27 @@
-import { IsString, IsNumber, IsNotEmpty, Min } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsNumber, IsNotEmpty, Min, MinLength } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 
 export class CreateAssetDto {
+
   @IsString()
   @IsNotEmpty()
+  @MinLength(2)
   name: string;
 
   @IsString()
   @IsNotEmpty()
+  @MinLength(5)
   description: string;
 
   @IsString()
   @IsNotEmpty()
+  @Transform(({ value }) => value.trim().toLowerCase())
   location: string;
 
   @IsString()
   @IsNotEmpty()
+  @MinLength(2)
+  @Transform(({ value }) => value.trim().toLowerCase())
   category: string;
 
   @Type(() => Number)

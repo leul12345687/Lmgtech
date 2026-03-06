@@ -24,14 +24,14 @@ export class AiService implements OnModuleInit {
     throw new Error('AI_BASE_URL is not defined in environment variables');
   }
 
-  this.AI_BASE_URL = baseUrl;
+  this.AI_BASE_URl = baseUrl;
 
   this.logger.log(`AI Service initialized with base URL: ${this.AI_BASE_URl}`);
 
     // Optional: Test AI connection at startup
     try {
       await firstValueFrom(
-        this.httpService.get(`${this.AI_BASE_URL}/health`, {
+        this.httpService.get(`${this.AI_BASE_URl}/health`, {
           timeout: 5000,
         }),
       );

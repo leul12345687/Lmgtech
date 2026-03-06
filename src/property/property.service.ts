@@ -46,14 +46,20 @@ export class PropertyService {
   // CATEGORY NORMALIZATION
   // =========================================================
   private async findOrCreateCategory(inputCategory: string): Promise<string> {
-    const normalized = inputCategory.trim().toLowerCase();
 
-    const existingCategory = await this.assetModel.findOne({
-      category: { $regex: new RegExp(`^${normalized}$`, 'i') },
-    });
+  const normalized = inputCategory.trim().toLowerCase();
 
-    return existingCategory ? existingCategory.category : normalized;
+  const existingCategory = await this.assetModel.findOne({
+    category: { $regex: new RegExp(`^${normalized}$`, 'i') },
+  });
+
+  if (existingCategory) {
+    return existingCategory.category;
   }
+
+  // allow brand new category
+  return normalized;
+}
 
   // =========================================================
   // CATEGORY SEARCH
