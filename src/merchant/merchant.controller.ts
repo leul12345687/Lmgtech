@@ -74,19 +74,18 @@ export class MerchantController {
       throw error;
     }
   }
-@Get('financial-info')
+  @Get('financial-info')
 @UseGuards(MerchantJwtAuthGuard)
 async getFinancialInfo(@Req() req: any) {
+  const merchantId = req.user.sub;
 
- const merchantId = req.user.sub;
+  const financialInfo = await this.aiService.getMerchantIncome(merchantId);
 
-  const financialInfo =
-    await this.aiService.getMerchantIncome(merchantId)
-
+  // TypeScript safe: if null, return empty object
   return {
     success: true,
-    financialInfo
-  }
+    financialInfo: financialInfo ?? {}
+  };
 }
   // ===========================================================
   // 🟣 FETCH ALL MERCHANTS
