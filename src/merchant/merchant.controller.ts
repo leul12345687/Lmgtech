@@ -74,23 +74,19 @@ export class MerchantController {
       throw error;
     }
   }
-  
-// ===========================================================
-// 💰 GET MERCHANT FINANCIAL INFO
-// ===========================================================
 @Get('financial-info')
 @UseGuards(MerchantJwtAuthGuard)
 async getFinancialInfo(@Req() req: any) {
-  const merchantId = req.user.userId; // from JWT payload
 
-  const financialInfo = await this.aiService.getMerchantIncome(
-    merchantId,
-  );
+ const merchantId = req.user.sub;
+
+  const financialInfo =
+    await this.aiService.getMerchantIncome(merchantId)
 
   return {
     success: true,
-    financialInfo,
-  };
+    financialInfo
+  }
 }
   // ===========================================================
   // 🟣 FETCH ALL MERCHANTS
