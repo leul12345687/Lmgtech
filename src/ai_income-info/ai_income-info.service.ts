@@ -62,7 +62,7 @@ export class AiService implements OnModuleInit {
       );
 
       const aiData = response.data;
-
+      this.logger.log(`AI raw response: ${JSON.stringify(aiData)}`);
       if (!aiData || aiData.status !== 'success') {
         this.logger.warn(
           `AI returned unsuccessful response for merchant ${merchantId}`,
