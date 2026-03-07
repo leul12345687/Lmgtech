@@ -64,7 +64,7 @@ export class AiService implements OnModuleInit {
 
     return response.data;
   }
-
+  
 // ==============================
 // DEMAND PREDICTION
 // ==============================

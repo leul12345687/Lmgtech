@@ -21,8 +21,8 @@ import { MerchantJwtAuthGuard } from './merchantAuthGuard';
 @Controller('merchant')
 export class MerchantController {
   private readonly logger = new Logger(MerchantController.name)
-  private readonly aiService: AiService;
-  constructor(private readonly merchantService: MerchantService) {}
+  constructor(private readonly merchantService: MerchantService,
+              private readonly aiService: AiService,) {}
 
   // ===========================================================
   // 🟢 REGISTER MERCHANT
