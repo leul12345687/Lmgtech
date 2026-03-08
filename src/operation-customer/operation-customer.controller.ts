@@ -16,10 +16,12 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as sharp from 'sharp'
-import { Types } from 'mongoose';
+import { Asset, AssetDocument } from '../property/property.schema';
+
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-
+import { Model, Types } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
 import { CustomerOperationsService } from './operation-customer.service';
 import { CustomerJwtAuthGuard } from '../customer/customerAuthGuard';
 import { ManagerJwtAuthGuard } from 'src/admin/AdminAuthguard';
@@ -28,28 +30,59 @@ import { ManagerJwtAuthGuard } from 'src/admin/AdminAuthguard';
 export class CustomerOperationsController {
   private readonly logger = new Logger(CustomerOperationsController.name);
 
-  constructor(private readonly customerOpsService: CustomerOperationsService) {}
+  constructor(private readonly customerOpsService: CustomerOperationsService,
+      @InjectModel(Asset.name) private readonly assetModel: Model<AssetDocument>,) {}
 
   // ===========================================================
   // 1️⃣ GET PROPERTIES BY CATEGORY
   // ===========================================================
-  @Get('properties')
+ @Get('properties')
 async getPropertiesByCategory(
   @Query('category') category: string,
-  @Query('customCategory') customCategory: string, // ✅ optional custom category
-  @Req() req
+  @Query('lang') lang: string,
 ) {
   try {
-    const lang = req.query.lang || 'en';
+    /* =========================================
+       VALIDATE CATEGORY
+    ========================================= */
+    if (!category) {
+      throw new BadRequestException('Category query parameter is required.');
+    }
+
+    const language = lang || 'en';
+
+    /* =========================================
+       CALL SERVICE
+    ========================================= */
     return await this.customerOpsService.getPropertiesByCategory(
       category,
-      lang,
-      customCategory || undefined // pass only if defined
+      language,
     );
+
   } catch (error) {
-    this.logger.error('❌ Error fetching properties by category:', error);
-    throw new InternalServerErrorException('Failed to fetch properties.');
+
+    /* =========================================
+       LOG ERROR
+    ========================================= */
+    this.logger.error(
+      `❌ Error fetching properties for category: ${category}`,
+      error.stack,
+    );
+
+    /* =========================================
+       THROW ERROR
+    ========================================= */
+    throw new InternalServerErrorException(
+      'Failed to fetch properties.',
+    );
   }
+}
+
+@Get('categories')
+async getCategories() {
+  // Fetch distinct categories from the Asset collection
+  const categories = await this.assetModel.distinct('category').exec();
+  return { categories };
 }
   // ===========================================================
   // 2️⃣ GET BOOKINGS OF LOGGED-IN CUSTOMER

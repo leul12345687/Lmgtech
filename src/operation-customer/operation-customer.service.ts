@@ -26,87 +26,149 @@ export class CustomerOperationsService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly chapaService: ChapaService, // Inject ChapaService
   ) {}
-
+  
 // ===========================================================
-async getPropertiesByCategory(category: string, lang?: string, customCategory?: string) {
+async getPropertiesByCategory(category: string, lang?: string) {
   try {
-    const query: any = { category };
-    if (customCategory) query.customCategory = customCategory;
+    /* =====================================================
+       VALIDATE CATEGORY
+    ===================================================== */
+    if (!category) {
+      throw new BadRequestException(
+        await this.i18n.translate(
+          'customer-operation.ERROR_INVALID_CATEGORY',
+          { lang },
+        ),
+      );
+    }
 
+    const cleanCategory = category.trim();
+
+    /* =====================================================
+       BUILD QUERY (CASE-INSENSITIVE)
+    ===================================================== */
+    const query = {
+      category: { $regex: `^${cleanCategory}$`, $options: 'i' },
+    };
+
+    /* =====================================================
+       FETCH ASSETS
+    ===================================================== */
     const assets = await this.assetModel
       .find(query)
-      .populate('merchant', 'fullName email phonenumber businessName acountnumber')
+      .populate(
+        'merchant',
+        'fullName email phonenumber businessName acountnumber',
+      )
       .lean()
       .exec();
 
-    if (!assets.length) {
+    if (!assets || assets.length === 0) {
       return {
-        message: await this.i18n.translate('customer-operation.ERROR_NO_PROPERTY_FOUND', { lang }),
-        category,
+        message: await this.i18n.translate(
+          'customer-operation.ERROR_NO_PROPERTY_FOUND',
+          { lang },
+        ),
+        category: cleanCategory,
         totalProperties: 0,
         properties: [],
       };
     }
 
-    const propertyIds = assets.map(a => a._id);
+    /* =====================================================
+       COLLECT PROPERTY IDS
+    ===================================================== */
+    const propertyIds = assets.map((asset) => asset._id);
 
+    /* =====================================================
+       FETCH BOOKINGS
+    ===================================================== */
     const bookings = await this.bookingModel
       .find({ asset: { $in: propertyIds } })
       .select('asset startDate endDate numberOfProperty status')
-      .lean();
+      .lean()
+      .exec();
 
-    const bookingMap = bookings.reduce((acc, booking) => {
+    /* =====================================================
+       BUILD BOOKING MAP
+    ===================================================== */
+    const bookingMap: Record<string, any[]> = {};
+
+    bookings.forEach((booking) => {
       const propertyId = booking.asset.toString();
-      if (!acc[propertyId]) acc[propertyId] = [];
-      acc[propertyId].push({
+
+      if (!bookingMap[propertyId]) {
+        bookingMap[propertyId] = [];
+      }
+
+      bookingMap[propertyId].push({
         startDate: booking.startDate,
         endDate: booking.endDate,
         numberOfProperty: booking.numberOfProperty,
         status: booking.status,
       });
-      return acc;
-    }, {} as Record<string, any[]>);
+    });
 
-    const properties = assets.map(asset => {
+    /* =====================================================
+       BUILD PROPERTY RESPONSE
+    ===================================================== */
+    const properties = assets.map((asset) => {
       const merchant = asset.merchant as any;
-      const propertyIdString = asset._id.toString();
-      const associatedBookings = bookingMap[propertyIdString] || [];
+      const propertyId = asset._id.toString();
 
       return {
+        _id: asset._id,
         name: asset.name,
         description: asset.description,
         category: asset.category,
         numberOfProperty: asset.numberOfProperty,
         status: asset.status,
+
         imageUrls: asset.imageUrls || [],
+
         rentalPrice: {
-          perHour: asset.rentalPriceperhour,
-          perDay: asset.rentalPriceperday,
-          perWeek: asset.rentalPriceperweek,
-          perMonth: asset.rentalPricepermonth,
-          perYear: asset.rentalPriceperyear,
+          perHour: asset.rentalPriceperhour || null,
+          perDay: asset.rentalPriceperday || null,
+          perWeek: asset.rentalPriceperweek || null,
+          perMonth: asset.rentalPricepermonth || null,
+          perYear: asset.rentalPriceperyear || null,
         },
+
         merchant: {
           name: merchant?.fullName || 'N/A',
-          acountnumber: merchant?.acountnumber,
           email: merchant?.email || 'N/A',
           phone: merchant?.phonenumber || 'N/A',
           businessName: merchant?.businessName || 'N/A',
+          acountnumber: merchant?.acountnumber || 'N/A',
         },
-        bookings: associatedBookings,
+
+        bookings: bookingMap[propertyId] || [],
       };
     });
 
+    /* =====================================================
+       SUCCESS RESPONSE
+    ===================================================== */
     return {
-      message: await this.i18n.translate('customer-operation.SUCCESS_PROPERTY_FETCHED', { lang }),
-      category,
+      message: await this.i18n.translate(
+        'customer-operation.SUCCESS_PROPERTY_FETCHED',
+        { lang },
+      ),
+      category: cleanCategory,
       totalProperties: properties.length,
       properties,
     };
   } catch (error) {
-    console.error('❌ Error fetching properties:', error);
+    this.logger.error(
+      '❌ Error fetching properties by category',
+      error.stack,
+    );
+
     throw new InternalServerErrorException(
-      await this.i18n.translate('customer-operation.ERROR_INTERNAL', { lang }),
+      await this.i18n.translate(
+        'customer-operation.ERROR_INTERNAL',
+        { lang },
+      ),
     );
   }
 }// ==========================================================
