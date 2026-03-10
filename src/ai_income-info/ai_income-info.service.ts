@@ -29,7 +29,7 @@ export class AiService implements OnModuleInit {
     // Optional: Test AI connection at startup
     try {
       await firstValueFrom(
-        this.httpService.get(`${this.AI_BASE_URl}/health`, { timeout: 5000 }),
+        this.httpService.get(`${this.AI_BASE_URl}/health`, { timeout: 15000 }),
       );
       this.logger.log('AI service connection successful');
     } catch (error) {
@@ -56,7 +56,7 @@ export class AiService implements OnModuleInit {
 
       if (!aiData || aiData.status !== 'success') {
         this.logger.warn(`AI returned unsuccessful response for merchant ${merchantId}`);
-        return null; // Frontend will handle null safely
+        return null; 
       }
 
       const data = aiData.data ?? aiData; // In case response wraps fields inside data
@@ -84,4 +84,20 @@ export class AiService implements OnModuleInit {
       );
     }
   }
+
+  private async requestWithRetry(url: string, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await firstValueFrom(
+        this.httpService.get(url, { timeout: 120000 }),
+      );
+    } catch (error) {
+      this.logger.warn(`AI request failed. Retry ${i + 1}/${retries}`);
+
+      if (i === retries - 1) throw error;
+
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+}
 }
