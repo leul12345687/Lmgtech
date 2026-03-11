@@ -30,7 +30,9 @@ export class AiAdminService implements OnModuleInit {
   // ==========================
   async getMerchantRisk() {
     const response = await firstValueFrom(
-      this.httpService.get(`${this.AI_BASE_URL}/merchant-risk`)
+      this.httpService.get(`${this.AI_BASE_URL}/merchant-risk`, {
+  timeout: 60000
+})
     );
 
     return response.data;
@@ -41,7 +43,9 @@ export class AiAdminService implements OnModuleInit {
   // ==========================
   async getFraudDetection() {
     const response = await firstValueFrom(
-      this.httpService.get(`${this.AI_BASE_URL}/fraud-detection`)
+      this.httpService.get(`${this.AI_BASE_URL}/fraud-detection`, {
+  timeout: 60000
+})
     );
 
     return response.data;
@@ -52,7 +56,9 @@ export class AiAdminService implements OnModuleInit {
   // ==========================
   async getAnalytics() {
     const response = await firstValueFrom(
-      this.httpService.get(`${this.AI_BASE_URL}/analytics`)
+      this.httpService.get(`${this.AI_BASE_URL}/analytics`, {
+  timeout: 60000
+})
     );
 
     return response.data;
@@ -74,7 +80,9 @@ export class AiAdminService implements OnModuleInit {
   // ==========================
   async retrainFraudModel() {
     const response = await firstValueFrom(
-      this.httpService.post(`${this.AI_BASE_URL}/retrain/fraud`)
+      this.httpService.post(`${this.AI_BASE_URL}/retrain/fraud`, {
+  timeout: 60000
+})
     );
 
     return response.data;
