@@ -21,9 +21,9 @@ import { BankingService } from './banking/banking.service';
 import { BankingController } from './banking/banking.controller';
 import { BankingModule } from './banking/banking.module';
 import { ChapaModule } from './chapa/chapa.module';
-
 import { AiIncomeInfoModule } from './ai_income-info/ai_income-info.module';
 import { AiModule } from './ai/ai.module';
+import { AiAdminModule } from './ai_admin_portal/ai_admin_portal.module';
 
 import * as path from 'path';
 
@@ -83,7 +83,8 @@ import * as path from 'path';
     BankingModule,
     ChapaModule,
     AiIncomeInfoModule,
-    AiModule ,   // ✅ VERY IMPORTANT
+    AiModule,
+    AiAdminModule ,   // ✅ VERY IMPORTANT
   ],
   controllers: [AppController, BankingController,  ],
   providers: [AppService, BankingService,],

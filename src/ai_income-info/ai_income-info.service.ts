@@ -84,20 +84,4 @@ export class AiService implements OnModuleInit {
       );
     }
   }
-
-  private async requestWithRetry(url: string, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await firstValueFrom(
-        this.httpService.get(url, { timeout: 120000 }),
-      );
-    } catch (error) {
-      this.logger.warn(`AI request failed. Retry ${i + 1}/${retries}`);
-
-      if (i === retries - 1) throw error;
-
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-    }
-  }
-}
 }
