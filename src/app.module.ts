@@ -24,6 +24,7 @@ import { ChapaModule } from './chapa/chapa.module';
 import { AiIncomeInfoModule } from './ai_income-info/ai_income-info.module';
 import { AiModule } from './ai/ai.module';
 import { AiAdminModule } from './ai_admin_portal/ai_admin_portal.module';
+import { RecommendationModule} from './recommendationservice/recommendationmodule.module';
 
 import * as path from 'path';
 
@@ -84,7 +85,8 @@ import * as path from 'path';
     ChapaModule,
     AiIncomeInfoModule,
     AiModule,
-    AiAdminModule ,   // ✅ VERY IMPORTANT
+    AiAdminModule,
+    RecommendationModule ,
   ],
   controllers: [AppController, BankingController,  ],
   providers: [AppService, BankingService,],

@@ -1,42 +1,53 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 
 @Injectable()
-export class AiService implements OnModuleInit {
+export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly AI_BASE_URL = 'https://ai-merchant-portal.onrender.com';
 
   constructor(private readonly httpService: HttpService) {}
 
-  async onModuleInit() {
-    this.logger.log('🚀 Waking AI at startup...');
-    await this.ensureAIIsReady();
-  }
+  // ==============================
+  // SAFE HTTP CALL WRAPPER
+  // ==============================
+ private async safeRequest<T>(
+  requestFn: () => Promise<T>,
+  retries = 2,
+): Promise<T | null> {
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      return await requestFn();
+    } catch (error: any) {
+      this.logger.warn(
+        `⚠️ AI request failed (attempt ${attempt}): ${error?.message}`,
+      );
 
-  private async ensureAIIsReady() {
-    const maxWaitTime = 3 * 60 * 1000;
-    const start = Date.now();
-
-    while (Date.now() - start < maxWaitTime) {
-      try {
-        const response = await firstValueFrom(
-          this.httpService.get(`${this.AI_BASE_URL}/health`),
-        );
-
-        if (response.status === 200) {
-          this.logger.log('✅ AI ready');
-          return;
-        }
-      } catch {
-        this.logger.log('⏳ AI booting...');
+      if (attempt > retries) {
+        this.logger.error('❌ AI service unavailable after retries');
+        return null;
       }
 
-      await new Promise((res) => setTimeout(res, 10000));
+      await new Promise((res) => setTimeout(res, 2000));
     }
+  }
 
-    throw new Error('AI did not become ready.');
+  // ✅ Add this line (fixes TS error)
+  return null;
+}
+  // ==============================
+  // OPTIONAL: NON-BLOCKING WARMUP
+  // ==============================
+  async warmUpAI() {
+    this.safeRequest(async () => {
+      const res = await firstValueFrom(
+        this.httpService.get(`${this.AI_BASE_URL}/health`, { timeout: 5000 }),
+      );
+      this.logger.log('✅ AI warmed up');
+      return res;
+    });
   }
 
   // ==============================
@@ -50,40 +61,65 @@ export class AiService implements OnModuleInit {
       contentType: image.mimetype,
     });
 
-    const response = await firstValueFrom(
-      this.httpService.post(
-        `${this.AI_BASE_URL}/validate-asset-image`,
-        formData,
-        {
-          headers: formData.getHeaders(),
-          maxBodyLength: Infinity,
-          timeout: 120000,
-        },
-      ),
-    );
+    const result = await this.safeRequest(async () => {
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${this.AI_BASE_URL}/validate-asset-image`,
+          formData,
+          {
+            headers: formData.getHeaders(),
+            maxBodyLength: Infinity,
+            timeout: 15000, // shorter timeout
+          },
+        ),
+      );
+      return response.data;
+    });
 
-    return response.data;
+    // fallback response (VERY IMPORTANT)
+    if (!result) {
+      return {
+        valid: false,
+        message: 'AI service unavailable, try again later',
+      };
+    }
+
+    return result;
   }
-  
-// ==============================
-// DEMAND PREDICTION
-// ==============================
-async getDemand(category: string) {
-  const response = await firstValueFrom(
-    this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
-      params: { category },
-      timeout: 120000,
-    }),
-  );
 
-  const aiData = response.data;
+  // ==============================
+  // DEMAND PREDICTION
+  // ==============================
+  async getDemand(category: string) {
+    const result = await this.safeRequest(async () => {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.AI_BASE_URL}/pre-upload-demand`, {
+          params: { category },
+          timeout: 15000,
+        }),
+      );
+      return response.data;
+    });
 
-  return {
-    category: aiData.category,
-    demandLevel: aiData.demand_level,
-    predictedDemand: aiData.predicted_demand_value,
-    recommendedAction: aiData.recommended_action,
-    merchantNotification: aiData.merchant_notification,
-    featureSnapshot: aiData.feature_snapshot,
-  };
-}}
+    // fallback response
+    if (!result) {
+      return {
+        category,
+        demandLevel: 'UNKNOWN',
+        predictedDemand: 0,
+        recommendedAction: 'Try again later',
+        merchantNotification: 'AI service temporarily unavailable',
+        featureSnapshot: {},
+      };
+    }
+
+    return {
+      category: result.category,
+      demandLevel: result.demand_level,
+      predictedDemand: result.predicted_demand_value,
+      recommendedAction: result.recommended_action,
+      merchantNotification: result.merchant_notification,
+      featureSnapshot: result.feature_snapshot,
+    };
+  }
+}

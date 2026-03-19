@@ -13,7 +13,7 @@ import { Booking, BookingDocument, BookingStatus, PaymentStatus } from '../booki
 import { User, UserDocument } from '../schema/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { ChapaService } from '../chapa/chapa.service';
-
+import { RecommendationService } from 'src/recommendationservice/recommendationservice.service';
 @Injectable()
 export class CustomerOperationsService {
   private readonly logger = new Logger(CustomerOperationsService.name);
@@ -25,15 +25,21 @@ export class CustomerOperationsService {
     private readonly i18n: I18nService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly chapaService: ChapaService, // Inject ChapaService
+     private readonly recommendationService: RecommendationService,
   ) {}
   
-// ===========================================================
-async getPropertiesByCategory(category: string, lang?: string) {
+  async getPropertiesByCategory(
+  category: string,
+  userId?: string,
+  lang?: string,
+) {
   try {
+
     /* =====================================================
-       VALIDATE CATEGORY
+       1️⃣ VALIDATE CATEGORY
     ===================================================== */
-    if (!category) {
+
+    if (!category || category.trim().length === 0) {
       throw new BadRequestException(
         await this.i18n.translate(
           'customer-operation.ERROR_INVALID_CATEGORY',
@@ -45,17 +51,13 @@ async getPropertiesByCategory(category: string, lang?: string) {
     const cleanCategory = category.trim();
 
     /* =====================================================
-       BUILD QUERY (CASE-INSENSITIVE)
+       2️⃣ FETCH PROPERTIES BY CATEGORY
     ===================================================== */
-    const query = {
-      category: { $regex: `^${cleanCategory}$`, $options: 'i' },
-    };
 
-    /* =====================================================
-       FETCH ASSETS
-    ===================================================== */
     const assets = await this.assetModel
-      .find(query)
+      .find({
+        category: { $regex: `^${cleanCategory}$`, $options: 'i' },
+      })
       .populate(
         'merchant',
         'fullName email phonenumber businessName acountnumber',
@@ -76,13 +78,15 @@ async getPropertiesByCategory(category: string, lang?: string) {
     }
 
     /* =====================================================
-       COLLECT PROPERTY IDS
+       3️⃣ COLLECT PROPERTY IDS
     ===================================================== */
+
     const propertyIds = assets.map((asset) => asset._id);
 
     /* =====================================================
-       FETCH BOOKINGS
+       4️⃣ FETCH BOOKINGS
     ===================================================== */
+
     const bookings = await this.bookingModel
       .find({ asset: { $in: propertyIds } })
       .select('asset startDate endDate numberOfProperty status')
@@ -90,8 +94,9 @@ async getPropertiesByCategory(category: string, lang?: string) {
       .exec();
 
     /* =====================================================
-       BUILD BOOKING MAP
+       5️⃣ BUILD BOOKING MAP
     ===================================================== */
+
     const bookingMap: Record<string, any[]> = {};
 
     bookings.forEach((booking) => {
@@ -110,13 +115,17 @@ async getPropertiesByCategory(category: string, lang?: string) {
     });
 
     /* =====================================================
-       BUILD PROPERTY RESPONSE
+       6️⃣ FORMAT PROPERTY DATA
     ===================================================== */
-    const properties = assets.map((asset) => {
+
+    const formattedProperties = assets.map((asset) => {
+
       const merchant = asset.merchant as any;
       const propertyId = asset._id.toString();
 
       return {
+        property_id: propertyId,   // important for AI service
+
         _id: asset._id,
         name: asset.name,
         description: asset.description,
@@ -147,18 +156,65 @@ async getPropertiesByCategory(category: string, lang?: string) {
     });
 
     /* =====================================================
-       SUCCESS RESPONSE
+       7️⃣ CALL AI RECOMMENDATION SERVICE
     ===================================================== */
+
+    let rankedProperties = formattedProperties;
+
+    if (userId) {
+      try {
+
+        const aiResults =
+          await this.recommendationService.rankProperties(
+            userId,
+            formattedProperties,
+          );
+
+        if (aiResults && aiResults.length > 0) {
+
+          rankedProperties = aiResults
+            .map((rec) => {
+
+              const property = formattedProperties.find(
+                (p) => p.property_id === rec.property_id,
+              );
+
+              if (!property) return null;
+
+              return {
+                ...property,
+                similarityScore: rec.similarity,
+              };
+            })
+            .filter(Boolean);
+
+        }
+
+      } catch (aiError) {
+
+        this.logger.warn(
+          '⚠ AI recommendation failed, returning normal category results',
+        );
+
+      }
+    }
+
+    /* =====================================================
+       8️⃣ SUCCESS RESPONSE
+    ===================================================== */
+
     return {
       message: await this.i18n.translate(
         'customer-operation.SUCCESS_PROPERTY_FETCHED',
         { lang },
       ),
       category: cleanCategory,
-      totalProperties: properties.length,
-      properties,
+      totalProperties: rankedProperties.length,
+      properties: rankedProperties,
     };
+
   } catch (error) {
+
     this.logger.error(
       '❌ Error fetching properties by category',
       error.stack,
