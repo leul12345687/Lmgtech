@@ -9,7 +9,7 @@ import { firstValueFrom } from 'rxjs';
 @Injectable()
 export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
-  private AI_BASE_URL: string;
+  private AI_BASE_URl: string;
 
   constructor(private readonly httpService: HttpService) {}
 
@@ -17,7 +17,7 @@ export class AiService implements OnModuleInit {
   // 🚀 NON-BLOCKING STARTUP (SAFE)
   // ===================================================
   async onModuleInit() {
-    const baseUrl = process.env.AI_BASE_URL;
+    const baseUrl = process.env.AI_BASE_URl;
 
     if (!baseUrl) {
       // ❗ DO NOT THROW → prevents crash
@@ -25,8 +25,8 @@ export class AiService implements OnModuleInit {
       return;
     }
 
-    this.AI_BASE_URL = baseUrl;
-    this.logger.log(`AI Service initialized: ${this.AI_BASE_URL}`);
+    this.AI_BASE_URl = baseUrl;
+    this.logger.log(`AI Service initialized: ${this.AI_BASE_URl}`);
 
     // ✅ Non-blocking warmup (does NOT crash app)
     this.warmUpAI();
@@ -35,7 +35,7 @@ export class AiService implements OnModuleInit {
   private async warmUpAI() {
     try {
       await firstValueFrom(
-        this.httpService.get(`${this.AI_BASE_URL}/health`, {
+        this.httpService.get(`${this.AI_BASE_URl}/health`, {
           timeout: 5000,
         }),
       );
@@ -78,7 +78,7 @@ export class AiService implements OnModuleInit {
   // 💰 MERCHANT FINANCIAL INFORMATION (SAFE)
   // ===================================================
   async getMerchantIncome(merchantId: string) {
-    if (!this.AI_BASE_URL) {
+    if (!this.AI_BASE_URl) {
       this.logger.warn('AI_BASE_URL not set. Returning fallback.');
       return this.getFallbackIncome();
     }
@@ -88,7 +88,7 @@ export class AiService implements OnModuleInit {
 
       const response = await firstValueFrom(
         this.httpService.get(
-          `${this.AI_BASE_URL}/merchant-income/${merchantId}`,
+          `${this.AI_BASE_URl}/merchant-income/${merchantId}`,
           { timeout: 15000 }, // ✅ shorter timeout
         ),
       );
