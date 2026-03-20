@@ -130,6 +130,7 @@ export class CustomerOperationsService {
         name: asset.name,
         description: asset.description,
         category: asset.category,
+         location: asset.location,   // ✅ ADD THIS LINE
         numberOfProperty: asset.numberOfProperty,
         status: asset.status,
 
