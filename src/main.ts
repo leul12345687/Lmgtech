@@ -27,7 +27,8 @@ origin: [
 "https://lmg-system.onrender.com",
 "https://lmg-system-bfyr.onrender.com",
 "https://lmg-merchant-portal.vercel.app",
-"https://lmg-admin-portal.vercel.app"
+"https://lmg-admin-portal.vercel.app",
+"https://messi-tech-q223.vercel.app",
 ],
 credentials: true,
 methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
