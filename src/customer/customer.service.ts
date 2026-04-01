@@ -21,17 +21,22 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 // --- INTERFACES (Used internally for type definition) ---
 export interface ICustomerRegistrationPayload {
   email: string;
-  password: string;
+  password?: string;
   fullName: string;
   phonenumber: number;
   acountnumber: number;
   address: string;
+  googleId?: string;
+  provider?: string;
+  profilePictureUrl?: string;
   profilePictureFile?: Express.Multer.File;
 }
 
 export interface ICustomerLoginPayload {
-  email: string;
-  password: string;
+  email?: string;
+  password?: string;
+  googleId?: string;
+  provider?: string;
 }
 
 export interface ICustomerLoginResponse {
@@ -78,24 +83,47 @@ export class CustomerService {
   // ===========================================================
   async register(credentials: ICustomerRegistrationPayload, lang: string): Promise<ICustomerLoginResponse> {
     this.logger.log('📥 [register] called');
-    const { email, password, fullName, phonenumber, acountnumber, address, profilePictureFile } = credentials;
+    const {
+      email,
+      password,
+      fullName,
+      phonenumber,
+      acountnumber,
+      address,
+      googleId,
+      provider,
+      profilePictureUrl,
+      profilePictureFile,
+    } = credentials;
 
-    if (!email || !password || !fullName || !phonenumber || !acountnumber || !address) {
+    const isGoogleRegistration = !!googleId;
+
+    if (!email || !fullName || !phonenumber || !acountnumber || !address) {
       const msg = await this.i18n.translate('customer.ERROR_REQUIRED_FIELDS', { lang });
       throw new BadRequestException(msg);
     }
+
+    if (!isGoogleRegistration && !password) {
+      const msg = await this.i18n.translate('customer.ERROR_PASSWORD_REQUIRED', { lang });
+      throw new BadRequestException(msg);
+    }
+
     const existingUser = await this.userModel.findOne({ email }).exec();
     if (existingUser) {
+      if (isGoogleRegistration && existingUser.googleId === googleId) {
+        return await this.login({ email, googleId, provider }, lang);
+      }
+
       const msg = await this.i18n.translate('customer.ERROR_EMAIL_EXISTS', { lang });
       throw new ConflictException(msg);
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    let profilePictureUrl = '';
+    const hashedPassword = password ? await bcrypt.hash(password, 10) : undefined;
+    let finalProfilePictureUrl = profilePictureUrl ?? '';
 
     if (profilePictureFile) {
       try {
-        profilePictureUrl = await this.cloudinaryService.uploadImage(profilePictureFile, 'customers');
+        finalProfilePictureUrl = await this.cloudinaryService.uploadImage(profilePictureFile, 'customers');
       } catch (error) {
         this.logger.error('❌ Failed to upload profile picture:', error);
         throw new InternalServerErrorException('Image upload failed.');
@@ -103,18 +131,34 @@ export class CustomerService {
     }
 
     const newCustomer = await this.userModel.create({
-      email, password: hashedPassword, fullName, phonenumber, acountnumber, address, profilePictureUrl,
-      role: UserRole.CUSTOMER, isActive: true,
+      email,
+      password: hashedPassword,
+      fullName,
+      phonenumber,
+      acountnumber,
+      address,
+      profilePictureUrl: finalProfilePictureUrl,
+      googleId,
+      provider: provider ?? (isGoogleRegistration ? 'google' : undefined),
+      role: UserRole.CUSTOMER,
+      isActive: true,
     });
 
     const token = this.generateToken(newCustomer._id, newCustomer.role);
     const successMsg = await this.i18n.translate('customer.SUCCESS_REGISTER', { lang });
 
     return {
-      token, message: successMsg,
+      token,
+      message: successMsg,
       customer: {
-        id: newCustomer._id.toString(), email: newCustomer.email, fullName: newCustomer.fullName, phonenumber: newCustomer.phonenumber,
-        acountnumber: newCustomer.acountnumber, address: newCustomer.address, profilePictureUrl: newCustomer.profilePictureUrl, role: newCustomer.role,
+        id: newCustomer._id.toString(),
+        email: newCustomer.email,
+        fullName: newCustomer.fullName,
+        phonenumber: newCustomer.phonenumber,
+        acountnumber: newCustomer.acountnumber,
+        address: newCustomer.address,
+        profilePictureUrl: newCustomer.profilePictureUrl,
+        role: newCustomer.role,
       },
     };
   }
@@ -124,21 +168,47 @@ export class CustomerService {
   // ===========================================================
   async login(credentials: ICustomerLoginPayload, lang: string): Promise<ICustomerLoginResponse> {
     this.logger.log('🔑 [login] called');
-    const { email, password } = credentials;
-
-    const customer = await this.userModel
-      .findOne({ email, role: UserRole.CUSTOMER, isActive: true })
-      .select('+password').exec();
+    const { email, password, googleId, provider } = credentials;
+    const isGoogleLogin = !!googleId;
 
     const invalidMsg = await this.i18n.translate('customer.ERROR_INVALID_CREDENTIALS', { lang });
 
-    if (!customer || !customer.password) {
+    if (!email && !googleId) {
       throw new UnauthorizedException(invalidMsg);
     }
 
-    const isMatch = await bcrypt.compare(password, customer.password);
-    if (!isMatch) {
+    const query = {
+      role: UserRole.CUSTOMER,
+      isActive: true,
+      $or: [] as any[],
+    };
+
+    if (googleId) {
+      query.$or.push({ googleId });
+    }
+    if (email) {
+      query.$or.push({ email });
+    }
+
+    const customer = await this.userModel.findOne(query).select('+password').exec();
+
+    if (!customer) {
       throw new UnauthorizedException(invalidMsg);
+    }
+
+    if (isGoogleLogin) {
+      if (!customer.googleId) {
+        customer.googleId = googleId;
+        customer.provider = provider ?? 'google';
+      }
+    } else {
+      if (!password || !customer.password) {
+        throw new UnauthorizedException(invalidMsg);
+      }
+      const isMatch = await bcrypt.compare(password, customer.password);
+      if (!isMatch) {
+        throw new UnauthorizedException(invalidMsg);
+      }
     }
 
     customer.lastLogin = new Date();
@@ -148,10 +218,17 @@ export class CustomerService {
     const successMsg = await this.i18n.translate('customer.SUCCESS_LOGIN', { lang });
 
     return {
-      token, message: successMsg,
+      token,
+      message: successMsg,
       customer: {
-        id: customer._id.toString(), email: customer.email, fullName: customer.fullName, phonenumber: customer.phonenumber,
-        acountnumber: customer.acountnumber, address: customer.address, profilePictureUrl: customer.profilePictureUrl, role: customer.role,
+        id: customer._id.toString(),
+        email: customer.email,
+        fullName: customer.fullName,
+        phonenumber: customer.phonenumber,
+        acountnumber: customer.acountnumber,
+        address: customer.address,
+        profilePictureUrl: customer.profilePictureUrl,
+        role: customer.role,
       },
     };
   }

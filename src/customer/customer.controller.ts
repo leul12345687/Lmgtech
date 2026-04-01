@@ -12,11 +12,14 @@ import { ManagerJwtAuthGuard } from 'src/admin/AdminAuthguard';
 // Define simplified interfaces locally for type clarity in the controller (optional, but better than 'any')
 interface IRegisterBody {
   email: string;
-  password: string;
+  password?: string;
   fullName: string;
   phonenumber: number;
   acountnumber: number;
   address: string;
+  googleId?: string;
+  provider?: string;
+  profilePictureUrl?: string;
 }
 
 @Controller('customer')

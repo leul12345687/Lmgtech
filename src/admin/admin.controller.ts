@@ -58,10 +58,6 @@ export class AdminController {
         // 🌟 CAPTURE LANGUAGE: Extracts language code from Accept-Language header
         @I18nLang() lang: string 
     ): Promise<User> {
-    // Example of a basic security measure: 
-    if (process.env.NODE_ENV === 'production') {
-        throw new ForbiddenException('Admin registration is not allowed via public API in production.');
-    }
     
     // 🌟 PASS LANGUAGE: Pass the captured 'lang' code to the service
     return this.adminService.registerAdmin(payload as any, lang);

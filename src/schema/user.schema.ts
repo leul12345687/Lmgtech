@@ -25,8 +25,11 @@ export class User {
   @Prop({ select: false }) 
   password?: string;
 
-  @Prop({ required: true, unique: true, index: true })
-  phonenumber: number;
+  @Prop({ required: false, unique: true, sparse: true })
+  googleId?: string;
+
+  @Prop({ required: false })
+  provider?: string;
 
   @Prop({ required:false })
   profilePictureUrl: string;
@@ -34,6 +37,9 @@ export class User {
   @Prop({ required: true })
   fullName: string;
   
+  @Prop({ required: false })
+  phonenumber: number;
+
   @Prop({ required: false })
   campanyname: string; // Used for general company/business name
   
