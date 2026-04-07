@@ -168,7 +168,8 @@ public async createBookingForPayment(
      6️⃣ PAYMENT METADATA
      =================================================== */
   const externalPaymentRef = `BOOK-${randomUUID()}`;
-  const expiresAt = startUTC;
+    // payment expiry: allow a short window from creation time (not booking start)
+    const expiresAt = moment().utc().add(this.PAYMENT_EXPIRE_HOURS, 'hours').toDate();
 
   /* ===================================================
      7️⃣ INITIATE CHAPA (SOURCE OF CHECKOUT URL)
@@ -318,7 +319,13 @@ public async handleChapaWebhook(payload: any) {
   const verification = await this.chapaService.verifyTransaction(reference);
 
   booking.webhookPayload = payload;
-  booking.paymentVerification = verification.raw;
+  booking.paymentVerification = verification?.raw ?? null;
+
+  // Defensive checks for verification
+  if (!verification || typeof verification.status !== 'string') {
+    this.logger.warn(`⚠️ Invalid verification payload for ref ${reference}`);
+    return { ok: true };
+  }
 
   // ⏳ PENDING → DO NOTHING
   if (verification.status === 'pending') {
@@ -336,7 +343,12 @@ public async handleChapaWebhook(payload: any) {
   const expectedAmount = Number(booking.totalPrice);
   const receivedAmount = Number(verification.amount);
 
-  if (!this.chapaService.amountsMatch(expectedAmount, receivedAmount)) {
+  // Use cents (integer) comparison to avoid float issues
+  const expectedCents = Math.round(expectedAmount * 100);
+  const receivedCents = Math.round(receivedAmount * 100);
+  const toleranceCents = Math.round(this.AMOUNT_TOLERANCE * 100);
+
+  if (Math.abs(expectedCents - receivedCents) > toleranceCents) {
     this.logger.error(
       `❌ Amount mismatch for ${reference}: expected ${expectedAmount}, got ${receivedAmount}`,
     );
@@ -375,7 +387,9 @@ public async handleChapaWebhook(payload: any) {
     const booking = await this.bookingModel.findById(bookingId).populate('merchant customer asset');
     if (!booking) throw new NotFoundException('Booking not found');
 
-    if (booking.merchant.toString() !== new Types.ObjectId(merchantId).toString()) {
+    // Normalize merchant id whether populated object or id
+    const bookingMerchantId = (booking.merchant as any)?._id ? String((booking.merchant as any)._id) : String(booking.merchant);
+    if (bookingMerchantId !== String(merchantId)) {
       throw new ForbiddenException('Not allowed to confirm this booking');
     }
 
@@ -518,7 +532,7 @@ private async expireUnpaidBookings() {
 @Cron('*/5 * * * *') // every 5 minutes
 async notifyConfirmedBookings() {
   const confirmed = await this.bookingModel.find({
-    status: BookingStatus.COMPLETED,
+    status: BookingStatus.CONFIRMED,
     notificationSentAfterConfirm: { $ne: true }
   });
 
@@ -697,9 +711,9 @@ private async notifyBookingCreatedPaymentRequired(
       `<p>Hello ${customer.fullName},</p>
        <p>Your booking for ${asset.name} is pending payment.</p>
        <p>Gross Amount (VAT included): ${amount}</p>
-       <p>Payment Reference:${ref}></p>
-       <p>Account Number:${accountNumber}</p>
-       <p>Expires At (ET):${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}</p>`
+       <p>Payment Reference: ${ref}</p>
+       <p>Account Number: ${accountNumber}</p>
+       <p>Expires At (ET): ${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}</p>`
     );
   } catch (err) {
     this.logger.warn(`Failed to send booking-created email to customer: ${err?.message}`);
@@ -723,7 +737,7 @@ private async notifyBookingCreatedPaymentRequired(
       merchant.email,
       'New Booking — Awaiting Payment',
       `<p>Hello ${merchant.businessName || merchant.fullName},</p>
-       <p>Booking created for${asset.name}.</p>
+       <p>Booking created for ${asset.name}.</p>
        <p>Customer: ${customer.fullName} (${customer.email})</p>
        <p>Gross Amount: ${amount}</p>
        <p>Payment Reference: <strong>${ref}</strong></p>`
@@ -837,13 +851,14 @@ private async reconcileBankPayments() {
       const tx = txMap.get(booking.externalPaymentRef);
       if (!tx) continue;
 
-      // Amount check with tolerance
-      const amountMatches =
-        Math.abs(Number(tx.amount) - Number(booking.totalPrice)) <= this.AMOUNT_TOLERANCE;
+      // Amount check with tolerance (compare in cents)
+      const txCents = Math.round(Number(tx.amount) * 100);
+      const bookingCents = Math.round(Number(booking.totalPrice) * 100);
+      const toleranceCents = Math.round(this.AMOUNT_TOLERANCE * 100);
+      const amountMatches = Math.abs(txCents - bookingCents) <= toleranceCents;
 
       // Merchant account check
-      const accountMatches =
-        tx.beneficiaryAccount === booking.merchantAccountNumber;
+      const accountMatches = tx.beneficiaryAccount === booking.merchantAccountNumber;
 
       if (!amountMatches || !accountMatches) continue;
 

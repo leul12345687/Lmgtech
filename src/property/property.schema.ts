@@ -13,19 +13,19 @@ export enum AssetStatus {
 @Schema({ timestamps: true })
 export class Asset {
   @Prop({ type: Types.ObjectId, ref: User.name, required: true, index: true })
-  merchant: Types.ObjectId;
+  merchant!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Booking', required: false })
   booking?: Types.ObjectId;
 
   @Prop({ required: true, trim: true })
-  name: string;
+  name!: string;
 
   @Prop({ required: false, trim: true })
   priceUnit?: string;
 
   @Prop({ required: true, trim: true })
-  description: string;
+  description!: string;
 
   @Prop({ required: true, trim: true, lowercase: true, index: true })
   location: string;

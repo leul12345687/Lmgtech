@@ -1,3 +1,4 @@
+
 // src/booking/booking.schema.ts
 
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
@@ -165,6 +166,13 @@ checkoutUrl:string;
   @Prop({ default: 'ETB' })
   currency: string;
 
+  // Reminder / Notification flags used by booking service cron jobs
+  @Prop({ default: false })
+  remindedBeforeEnd: boolean;
+
+  @Prop({ default: false })
+  notifiedEnd: boolean;
+
   // ============================
   // PAYMENT AMOUNTS
   // ============================
@@ -188,6 +196,10 @@ checkoutUrl:string;
 
   @Prop({ type: [String], default: [] })
   notificationHistory: string[];
+
+  // Reconciliation payload stored after bank sync
+  @Prop({ type: Object, default: null })
+  reconciliationPayload?: any;
 }
 
 export const BookingSchema = SchemaFactory.createForClass(Booking);

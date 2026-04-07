@@ -19,8 +19,8 @@ export type UserDocument = User & Document;
 })
 export class User {
   // Common Fields
-  @Prop({ required: true, unique: true, index: true })
-  email: string;
+    @Prop({ required: true, unique: true, index: true })
+    email!: string;
 
   @Prop({ select: false }) 
   password?: string;
@@ -31,24 +31,24 @@ export class User {
   @Prop({ required: false })
   provider?: string;
 
-  @Prop({ required:false })
-  profilePictureUrl: string;
+    @Prop({ required:false })
+    profilePictureUrl?: string;
 
-  @Prop({ required: true })
-  fullName: string;
+    @Prop({ required: true })
+    fullName!: string;
   
-  @Prop({ required: false })
-  phonenumber: number;
+    @Prop({ required: false })
+    phonenumber?: number;
 
-  @Prop({ required: false })
-  campanyname: string; // Used for general company/business name
+    @Prop({ required: false })
+    campanyname?: string; // Used for general company/business name
   
 
-  @Prop({ required: true })
-  address: string;
+    @Prop({ required: true })
+    address!: string;
   
-  @Prop({ unique: false,  })
-  acountnumber: number;
+    @Prop({ unique: false,  })
+    acountnumber?: number;
   
   @Prop({ 
     type: String, 
@@ -56,29 +56,29 @@ export class User {
     enum: Object.values(UserRole),
     default: UserRole.CUSTOMER
   })
-  role: UserRole;
+    role!: UserRole;
 
 
  @Prop({ required:false })
-    businessName: string; 
+     businessName?: string; 
 
     @Prop({ type: [{ type: Types.ObjectId, ref: 'Asset' }], default: [] })
-    assetInventoryIds: Types.ObjectId[];
+    assetInventoryIds!: Types.ObjectId[];
 
     @Prop({ default: 'ETB' })
-    payoutCurrency: string;
+    payoutCurrency!: string;
 
 
 
   // Account Status
-  @Prop({ default: true })
-  isActive: boolean;
+    @Prop({ default: true })
+    isActive!: boolean;
   
-  @Prop({ default: Date.now })
-  lastLogin: Date;
+    @Prop({ default: Date.now })
+    lastLogin!: Date;
 
     // Mongoose will automatically add _id, but for clarity:
-    _id: Types.ObjectId; 
+    _id!: Types.ObjectId; 
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
@@ -90,13 +90,13 @@ export const UserSchema = SchemaFactory.createForClass(User);
 // Merchant Extension Fields (used to define the structure for the Merchant discriminator)
 export class MerchantExtension {
   @Prop({ required: true })
-  businessName: string; // Specific business name field (may overlap with campanyname)
+    businessName!: string; // Specific business name field (may overlap with campanyname)
   
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Asset' }], default: [] })
-  assetInventoryIds: Types.ObjectId[];
+    assetInventoryIds!: Types.ObjectId[];
   
-  @Prop({ default: 'ETB' })
-  payoutCurrency: string; // The field that caused the TypeScript error
+    @Prop({ default: 'ETB' })
+    payoutCurrency!: string; // The field that caused the TypeScript error
 
 
 
@@ -122,7 +122,7 @@ export const MerchantSchema = SchemaFactory.createForClass(Merchant);
 // Customer Extension Fields (for completeness)
 export class CustomerExtension {
   @Prop({ default: 'pending', enum: ['pending', 'verified', 'rejected'] })
-  identityVerificationStatus: string; 
+    identityVerificationStatus!: string; 
   
   @Prop({ type: Types.ObjectId, ref: 'Booking' })
   lastBookingId?: Types.ObjectId;
@@ -132,7 +132,7 @@ export class CustomerExtension {
 @Schema()
 export class Customer extends User {
     @Prop({ default: 'pending', enum: ['pending', 'verified', 'rejected'] })
-    identityVerificationStatus: string; 
+    identityVerificationStatus!: string; 
 
     @Prop({ type: Types.ObjectId, ref: 'Booking' })
     lastBookingId?: Types.ObjectId;
