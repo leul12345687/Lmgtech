@@ -129,7 +129,7 @@ export class AdminService {
             id: (admin._id as Types.ObjectId).toString(), 
             email: admin.email,
             fullName: admin.fullName,
-            phonenumber: admin.phonenumber,
+               phonenumber: admin.phonenumber ?? 0,
             address: admin.address,
             role: admin.role
         }

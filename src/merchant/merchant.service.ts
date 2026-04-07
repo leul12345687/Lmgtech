@@ -132,10 +132,9 @@ export class MerchantService {
       merchant: {
         id: newMerchant._id.toString(),
         email: newMerchant.email,
-        fullName: newMerchant.fullName,
-        phonenumber: newMerchant.phonenumber,
-        acountnumber: newMerchant.acountnumber,
-        businessName: newMerchant.businessName,
+        fullName: newMerchant.fullName,phonenumber: newMerchant.phonenumber ?? 0,
+acountnumber: newMerchant.acountnumber ?? 0,
+businessName: newMerchant.businessName ?? '',
         address: newMerchant.address,
         profilePictureUrl: newMerchant.profilePictureUrl,
         role: newMerchant.role,
@@ -203,25 +202,24 @@ export class MerchantService {
           id: merchant._id.toString(),
           email: merchant.email,
           fullName: merchant.fullName,
-          phonenumber: merchant.phonenumber,
-          acountnumber: merchant.acountnumber,
-          businessName: merchant.businessName,
+          phonenumber: merchant.phonenumber ?? 0,
+          acountnumber: merchant.acountnumber ?? 0,
+          businessName: merchant.businessName ?? "",
           address: merchant.address,
           profilePictureUrl: merchant.profilePictureUrl,
           role: merchant.role,
         },
         
       };
-    } catch (error) {
-      this.logger.error(
-        `Login failed: ${error.message}`,
-        error.stack,
-      );
-      throw new InternalServerErrorException(
-        'Merchant login failed',
-      );
-    }
+    } catch (error: unknown) {
+  if (error instanceof Error) {
+    this.logger.error(`Login failed: ${error.message}`, error.stack);
+  } else {
+    this.logger.error(`Login failed: ${String(error)}`);
   }
+
+  throw new InternalServerErrorException('Merchant login failed');
+}}
   // ===========================================================
   // 🔵 FETCH ALL MERCHANTS
   // ===========================================================

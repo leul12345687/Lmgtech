@@ -154,10 +154,10 @@ export class CustomerService {
         id: newCustomer._id.toString(),
         email: newCustomer.email,
         fullName: newCustomer.fullName,
-        phonenumber: newCustomer.phonenumber,
-        acountnumber: newCustomer.acountnumber,
+        phonenumber: newCustomer.phonenumber ?? 0,
+        acountnumber: newCustomer.acountnumber ?? 0,
         address: newCustomer.address,
-        profilePictureUrl: newCustomer.profilePictureUrl,
+        profilePictureUrl: newCustomer.profilePictureUrl ?? "" ,
         role: newCustomer.role,
       },
     };
@@ -223,11 +223,10 @@ export class CustomerService {
       customer: {
         id: customer._id.toString(),
         email: customer.email,
-        fullName: customer.fullName,
-        phonenumber: customer.phonenumber,
-        acountnumber: customer.acountnumber,
+        fullName: customer.fullName,phonenumber: customer.phonenumber ?? 0,
+        acountnumber: customer.acountnumber ?? 0,
+        profilePictureUrl: customer.profilePictureUrl ?? '',
         address: customer.address,
-        profilePictureUrl: customer.profilePictureUrl,
         role: customer.role,
       },
     };
