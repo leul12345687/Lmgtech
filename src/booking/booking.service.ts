@@ -561,47 +561,27 @@ private async notifyMerchantBookingConfirmed(booking: BookingDocument) {
   if (!merchant) return;
 
   const msg = `Booking ${booking._id} has been confirmed by the merchant.`;
-  // SMS to customer
-  if (customer?.phonenumber) {
-    const marker = 'NOTIF:customer_booking_confirmed_sms';
-    const claimed = await this.bookingModel.findOneAndUpdate(
-      { _id: booking._id, notificationHistory: { $ne: marker } },
-      { $push: { notificationHistory: marker } },
-      { new: true },
-    );
-    if (claimed) {
-      try {
-        await this.smsService.sendSms(customer.phonenumber.toString(), msg);
-        await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedSms: true } }).catch(() => {});
-      } catch (sendErr) {
-        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
-        this.logger.warn(`SMS to customer failed: ${sendErr?.message}`);
-      }
-    }
+  if (merchant.phonenumber) {
+    await this.smsService.sendSms(merchant.phonenumber.toString(), msg)
+      .catch(() => {});
+  }
+
+  if (merchant.email) {
+    await this.mailService.sendMail(
       merchant.email,
       'Booking Confirmed',
       `<p>${msg}</p>`
-  if (customer?.email) {
-    const marker = 'NOTIF:customer_booking_confirmed_email';
-    const claimed = await this.bookingModel.findOneAndUpdate(
-      { _id: booking._id, notificationHistory: { $ne: marker } },
-      { $push: { notificationHistory: marker } },
-      { new: true },
-    );
-    if (claimed) {
-      try {
-        await this.mailService.sendMail(customer.email, 'Booking Confirmed', `<p>${msg}</p>`);
-        await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedEmail: true } }).catch(() => {});
-      } catch (sendErr) {
-        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
-        this.logger.warn(`Email to customer failed: ${sendErr?.message}`);
-      }
-    }
-  // - 1 hour reminder (once)
-  // - Final end notification when endDate <= now (once)
-  // Runs every 5 minutes to be precise
-  // ===================================================
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    ).catch(() => {});
+  }
+}
+
+// ===================================================
+// NOTIFY END-DATE EVENTS
+// - 1 hour reminder (once)
+// - Final end notification when endDate <= now (once)
+// Runs every 5 minutes to be precise
+// ===================================================
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
  @Cron('*/5 * * * *')
 private async notifyEndDateEvents() {
   const nowUtc = moment().utc().toDate();
@@ -888,27 +868,60 @@ private async notifyMerchantPaymentReceived(booking: BookingDocument) {
 
 private async notifyCustomerBookingConfirmed(booking: BookingDocument) {
   const customer = await this.userModel.findById(booking.customer);
-  const assetName = booking.snapshot?.assetName || 'asset';
   const msg = `Your booking ${booking._id} has been confirmed by the merchant.`;
 
   // SMS to customer
   if (customer?.phonenumber) {
-    try {
-      await this.smsService.sendSms(customer.phonenumber.toString(), msg);
-    } catch (err) {
-      this.logger.warn(`SMS to customer failed: ${err?.message}`);
+    const marker = 'NOTIF:customer_booking_confirmed_sms';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
+    );
+    if (claimed) {
+      try {
+        await this.smsService.sendSms(customer.phonenumber.toString(), msg);
+        await this.bookingModel.updateOne(
+          { _id: booking._id },
+          { $set: { notifiedSms: true } },
+        ).catch(() => {});
+      } catch (err) {
+        await this.bookingModel.updateOne(
+          { _id: booking._id },
+          { $pull: { notificationHistory: marker } },
+        ).catch(() => {});
+        this.logger.warn(`SMS to customer failed: ${err?.message}`);
+      }
     }
   }
 
   // Email to customer
   if (customer?.email) {
-    try {
-      await this.mailService.sendMail(customer.email, 'Booking Confirmed', `<p>${msg}</p>`);
-    } catch (err) {
-      this.logger.warn(`Email to customer failed: ${err?.message}`);
+    const marker = 'NOTIF:customer_booking_confirmed_email';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
+    );
+    if (claimed) {
+      try {
+        await this.mailService.sendMail(customer.email, 'Booking Confirmed', `<p>${msg}</p>`);
+        await this.bookingModel.updateOne(
+          { _id: booking._id },
+          { $set: { notifiedEmail: true } },
+        ).catch(() => {});
+      } catch (err) {
+        await this.bookingModel.updateOne(
+          { _id: booking._id },
+          { $pull: { notificationHistory: marker } },
+        ).catch(() => {});
+        this.logger.warn(`Email to customer failed: ${err?.message}`);
+      }
     }
   }
-}// ============================
+}
+
+// ============================
 // Bank Reconciliation (every 5 minutes)
 // ============================
 @Cron('*/5 * * * *')
