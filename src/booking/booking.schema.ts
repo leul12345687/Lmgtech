@@ -45,31 +45,31 @@ export class Booking {
   // CUSTOMER + MERCHANT
   // ============================
   @Prop({ type: Types.ObjectId, ref: User.name, required: true })
-  customer: Types.ObjectId;
+  customer!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: User.name, required: true })
-  merchant: Types.ObjectId;
+  merchant!: Types.ObjectId;
 
   // ============================
   // ASSET
   // ============================
   @Prop({ type: Types.ObjectId, ref: Asset.name, required: true })
-  asset: Types.ObjectId;
+  asset!: Types.ObjectId;
 
   // ============================
   // RENTAL PERIOD
   // ============================
   @Prop({ required: true })
-  startDate: Date;
+  startDate!: Date;
 
   @Prop({ required: true })
-  endDate: Date;
+  endDate!: Date;
 
   @Prop({ enum: TimeInterval, required: true })
-  timeInterval: TimeInterval;
+  timeInterval!: TimeInterval;
 
   @Prop({ required: true })
-  numberOfProperty: number;
+  numberOfProperty!: number;
 
   @Prop()
   numberOfUnits?: number;
@@ -86,19 +86,19 @@ export class Booking {
   totalPrice?: number;
 
   @Prop({ default: 0 })
-  systemVatFee: number;
+  systemVatFee!: number;
 
   @Prop({ default: 0 })
-  securityDeposit: number;
+  securityDeposit!: number;
 
   // ============================
   // STATUS & PAYMENT
   // ============================
   @Prop({ enum: BookingStatus, default: BookingStatus.PENDING })
-  status: BookingStatus;
+  status!: BookingStatus;
 
   @Prop({ enum: PaymentStatus, default: PaymentStatus.UNPAID })
-  paymentStatus: PaymentStatus;
+  paymentStatus!: PaymentStatus;
 
   // ============================
   // PAYMENT PROCESSING
@@ -116,7 +116,7 @@ export class Booking {
   paymentProofPath?: string;
 
 @Prop()
-checkoutUrl:string;
+checkoutUrl!:string;
 
   @Prop()
   transactionId?: string;
@@ -136,7 +136,7 @@ checkoutUrl:string;
   @Prop({ default: null })
   cancelledAt?: Date;
 // Mongoose will automatically add _id, but for clarity:
-    _id: Types.ObjectId; 
+    _id!: Types.ObjectId; 
   // ============================
   // SNAPSHOT (IMMUTABLE)
   // ============================
@@ -152,26 +152,26 @@ checkoutUrl:string;
     },
     default: {},
   })
-  snapshot: Record<string, any>;
+  snapshot!: Record<string, any>;
 
   // ============================
   // NOTIFICATIONS
   // ============================
   @Prop({ default: false })
-  notifiedEmail: boolean;
+  notifiedEmail!: boolean;
 
   @Prop({ default: false })
-  notifiedSms: boolean;
+  notifiedSms!: boolean;
 
   @Prop({ default: 'ETB' })
-  currency: string;
+  currency!: string;
 
   // Reminder / Notification flags used by booking service cron jobs
   @Prop({ default: false })
-  remindedBeforeEnd: boolean;
+  remindedBeforeEnd !: boolean;
 
   @Prop({ default: false })
-  notifiedEnd: boolean;
+  notifiedEnd!: boolean;
 
   // ============================
   // PAYMENT AMOUNTS
@@ -189,13 +189,13 @@ checkoutUrl:string;
   // FLAGS & HISTORY
   // ============================
   @Prop({ default: false })
-  notificationSentAfterConfirm: boolean;
+  notificationSentAfterConfirm!: boolean;
 
   @Prop({ default: false })
-  confirmedNotified: boolean;
+  confirmedNotified!: boolean;
 
   @Prop({ type: [String], default: [] })
-  notificationHistory: string[];
+  notificationHistory!: string[];
 
   // Reconciliation payload stored after bank sync
   @Prop({ type: Object, default: null })

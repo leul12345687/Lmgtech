@@ -7,7 +7,7 @@ export class RecommendationService {
   private readonly logger = new Logger(RecommendationService.name);
 
   private readonly AI_SERVICE_URL =
-    'https://your-ai-service.onrender.com';
+    'https://ai-customer-portal.onrender.com';
 
   constructor(private readonly httpService: HttpService) {}
 

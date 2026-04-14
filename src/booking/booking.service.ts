@@ -561,24 +561,42 @@ private async notifyMerchantBookingConfirmed(booking: BookingDocument) {
   if (!merchant) return;
 
   const msg = `Booking ${booking._id} has been confirmed by the merchant.`;
-
-  if (merchant.phonenumber) {
-    await this.smsService.sendSms(merchant.phonenumber.toString(), msg)
-      .catch(() => {});
-  }
-
-  if (merchant.email) {
-    await this.mailService.sendMail(
+  // SMS to customer
+  if (customer?.phonenumber) {
+    const marker = 'NOTIF:customer_booking_confirmed_sms';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
+    );
+    if (claimed) {
+      try {
+        await this.smsService.sendSms(customer.phonenumber.toString(), msg);
+        await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedSms: true } }).catch(() => {});
+      } catch (sendErr) {
+        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+        this.logger.warn(`SMS to customer failed: ${sendErr?.message}`);
+      }
+    }
       merchant.email,
       'Booking Confirmed',
       `<p>${msg}</p>`
-    ).catch(() => {});
-  }
-}
-
-
-  // ===================================================
-  // NOTIFY END-DATE EVENTS
+  if (customer?.email) {
+    const marker = 'NOTIF:customer_booking_confirmed_email';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
+    );
+    if (claimed) {
+      try {
+        await this.mailService.sendMail(customer.email, 'Booking Confirmed', `<p>${msg}</p>`);
+        await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedEmail: true } }).catch(() => {});
+      } catch (sendErr) {
+        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+        this.logger.warn(`Email to customer failed: ${sendErr?.message}`);
+      }
+    }
   // - 1 hour reminder (once)
   // - Final end notification when endDate <= now (once)
   // Runs every 5 minutes to be precise
@@ -705,16 +723,34 @@ private async notifyBookingCreatedPaymentRequired(
 
   // Email to customer
   try {
-    await this.mailService.sendMail(
-      customer.email,
-      'Booking Created — Payment Required',
-      `<p>Hello ${customer.fullName},</p>
-       <p>Your booking for ${asset.name} is pending payment.</p>
-       <p>Gross Amount (VAT included): ${amount}</p>
-       <p>Payment Reference: ${ref}</p>
-       <p>Account Number: ${accountNumber}</p>
-       <p>Expires At (ET): ${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}</p>`
+    const marker = 'NOTIF:customer_booking_created_email';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
     );
+    if (claimed) {
+      try {
+        await this.mailService.sendMail(
+          customer.email,
+          'Booking Created — Payment Required',
+          `<p>Hello ${customer.fullName},</p>
+           <p>Your booking for ${asset.name} is pending payment.</p>
+           <p>Gross Amount (VAT included): ${amount}</p>
+           <p>Payment Reference:${ref}></p>
+           <p>Account Number:${accountNumber}</p>
+           <p>Expires At (ET):${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}</p>`
+        );
+        await this.bookingModel.updateOne(
+          { _id: booking._id },
+          { $set: { notifiedEmail: true } },
+        ).catch(() => {});
+      } catch (sendErr) {
+        // rollback claim so retries can occur
+        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+        throw sendErr;
+      }
+    }
   } catch (err) {
     this.logger.warn(`Failed to send booking-created email to customer: ${err?.message}`);
   }
@@ -722,10 +758,24 @@ private async notifyBookingCreatedPaymentRequired(
   // SMS to customer
   if (customer.phonenumber) {
     try {
-      await this.smsService.sendSms(
-        customer.phonenumber.toString(),
-        `Booking created for ${asset.name}. Gross: ${amount} Ref: ${ref}. Account: ${accountNumber}. Pay before ${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}`
+      const marker = 'NOTIF:customer_booking_created_sms';
+      const claimed = await this.bookingModel.findOneAndUpdate(
+        { _id: booking._id, notificationHistory: { $ne: marker } },
+        { $push: { notificationHistory: marker } },
+        { new: true },
       );
+      if (claimed) {
+        try {
+          await this.smsService.sendSms(
+            customer.phonenumber.toString(),
+            `Booking created for ${asset.name}. Gross: ${amount} Ref: ${ref}. Account: ${accountNumber}. Pay before ${moment(booking.expiresAt).tz(this.ET_TIMEZONE).format('YYYY-MM-DD HH:mm')}`
+          );
+          await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedSms: true } }).catch(() => {});
+        } catch (sendErr) {
+          await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+          throw sendErr;
+        }
+      }
     } catch (err) {
       this.logger.warn(`Failed to send SMS to customer: ${err?.message}`);
     }
@@ -733,15 +783,29 @@ private async notifyBookingCreatedPaymentRequired(
 
   // Notify merchant by email
   try {
-    await this.mailService.sendMail(
-      merchant.email,
-      'New Booking — Awaiting Payment',
-      `<p>Hello ${merchant.businessName || merchant.fullName},</p>
-       <p>Booking created for ${asset.name}.</p>
-       <p>Customer: ${customer.fullName} (${customer.email})</p>
-       <p>Gross Amount: ${amount}</p>
-       <p>Payment Reference: <strong>${ref}</strong></p>`
+    const marker = 'NOTIF:merchant_booking_created_email';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
     );
+    if (claimed) {
+      try {
+        await this.mailService.sendMail(
+          merchant.email,
+          'New Booking — Awaiting Payment',
+          `<p>Hello ${merchant.businessName || merchant.fullName},</p>
+           <p>Booking created for${asset.name}.</p>
+           <p>Customer: ${customer.fullName} (${customer.email})</p>
+           <p>Gross Amount: ${amount}</p>
+           <p>Payment Reference: <strong>${ref}</strong></p>`
+        );
+        await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedEmail: true } }).catch(() => {});
+      } catch (sendErr) {
+        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+        throw sendErr;
+      }
+    }
   } catch (err) {
     this.logger.warn(`Failed to send booking-created email to merchant: ${err?.message}`);
   }
@@ -749,10 +813,24 @@ private async notifyBookingCreatedPaymentRequired(
   // SMS to merchant
   if (merchant.phonenumber) {
     try {
-      await this.smsService.sendSms(
-        merchant.phonenumber.toString(),
-        `New booking for ${asset.name}. Gross: ${amount} Ref: ${ref}`
+      const marker = 'NOTIF:merchant_booking_created_sms';
+      const claimed = await this.bookingModel.findOneAndUpdate(
+        { _id: booking._id, notificationHistory: { $ne: marker } },
+        { $push: { notificationHistory: marker } },
+        { new: true },
       );
+      if (claimed) {
+        try {
+          await this.smsService.sendSms(
+            merchant.phonenumber.toString(),
+            `New booking for ${asset.name}. Gross: ${amount} Ref: ${ref}`
+          );
+          await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedSms: true } }).catch(() => {});
+        } catch (sendErr) {
+          await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+          throw sendErr;
+        }
+      }
     } catch (err) {
       this.logger.warn(`Failed to send SMS to merchant: ${err?.message}`);
     }
@@ -771,19 +849,39 @@ private async notifyMerchantPaymentReceived(booking: BookingDocument) {
 
   // SMS
   if (merchant.phonenumber) {
-    try {
-      await this.smsService.sendSms(merchant.phonenumber.toString(), msg);
-    } catch (err) {
-      this.logger.warn(`SMS to merchant failed: ${err?.message}`);
+    const marker = 'NOTIF:merchant_payment_received_sms';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
+    );
+    if (claimed) {
+      try {
+        await this.smsService.sendSms(merchant.phonenumber.toString(), msg);
+        await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedSms: true } }).catch(() => {});
+      } catch (sendErr) {
+        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+        this.logger.warn(`SMS to merchant failed: ${sendErr?.message}`);
+      }
     }
   }
 
   // Email
   if (merchant.email) {
-    try {
-      await this.mailService.sendMail(merchant.email, 'Payment Received — Confirm Booking', `<p>${msg}</p>`);
-    } catch (err) {
-      this.logger.warn(`Email to merchant failed: ${err?.message}`);
+    const marker = 'NOTIF:merchant_payment_received_email';
+    const claimed = await this.bookingModel.findOneAndUpdate(
+      { _id: booking._id, notificationHistory: { $ne: marker } },
+      { $push: { notificationHistory: marker } },
+      { new: true },
+    );
+    if (claimed) {
+      try {
+        await this.mailService.sendMail(merchant.email, 'Payment Received — Confirm Booking', `<p>${msg}</p>`);
+        await this.bookingModel.updateOne({ _id: booking._id }, { $set: { notifiedEmail: true } }).catch(() => {});
+      } catch (sendErr) {
+        await this.bookingModel.updateOne({ _id: booking._id }, { $pull: { notificationHistory: marker } }).catch(() => {});
+        this.logger.warn(`Email to merchant failed: ${sendErr?.message}`);
+      }
     }
   }
 }
