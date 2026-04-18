@@ -1001,15 +1001,19 @@ private async reconcileBankPayments() {
       // 6️⃣ Notify merchant (non-blocking)
       try {
         await this.notifyMerchantPaymentReceived(updated);
-      } catch (notifyErr) {
+      } catch (notifyErr: unknown) {
+        const notifyMessage =
+          notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
         this.logger.error(
           `⚠ Payment reconciled but merchant notification failed for booking ${updated._id}`,
-          notifyErr?.message,
+          notifyMessage,
         );
       }
     }
-  } catch (err) {
-    this.logger.error('🔥 Bank reconciliation failed', err?.message);
+  } catch (err: unknown) {
+    const reconcileMessage =
+      err instanceof Error ? err.message : String(err);
+    this.logger.error('🔥 Bank reconciliation failed', reconcileMessage);
   }
 }
 

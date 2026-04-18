@@ -19,6 +19,7 @@ interface IRegisterBody {
   address: string;
   googleId?: string;
   provider?: string;
+  googleToken?: string;
   profilePictureUrl?: string;
 }
 

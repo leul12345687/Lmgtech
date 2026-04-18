@@ -14,6 +14,7 @@ import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { I18nService } from 'nestjs-i18n';
+import axios from 'axios';
 
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -28,6 +29,7 @@ export interface ICustomerRegistrationPayload {
   address: string;
   googleId?: string;
   provider?: string;
+  googleToken?: string;
   profilePictureUrl?: string;
   profilePictureFile?: Express.Multer.File;
 }
@@ -37,6 +39,7 @@ export interface ICustomerLoginPayload {
   password?: string;
   googleId?: string;
   provider?: string;
+  googleToken?: string;
 }
 
 export interface ICustomerLoginResponse {
@@ -92,13 +95,28 @@ export class CustomerService {
       address,
       googleId,
       provider,
+      googleToken,
       profilePictureUrl,
       profilePictureFile,
     } = credentials;
 
-    const isGoogleRegistration = !!googleId;
+    let resolvedEmail = email;
+    let resolvedFullName = fullName;
+    let resolvedGoogleId = googleId;
+    let resolvedProfilePictureUrl = profilePictureUrl ?? '';
+    let resolvedProvider = provider;
 
-    if (!email || !fullName || !phonenumber || !acountnumber || !address) {
+    const isGoogleRegistration = !!googleToken || !!googleId;
+    if (googleToken) {
+      const googleUser = await this.verifyGoogleToken(googleToken, lang);
+      resolvedEmail = googleUser.email;
+      resolvedFullName = googleUser.fullName;
+      resolvedGoogleId = googleUser.googleId;
+      resolvedProfilePictureUrl = googleUser.profilePictureUrl;
+      resolvedProvider = 'google';
+    }
+
+    if (!resolvedEmail || !resolvedFullName || !phonenumber || !acountnumber || !address) {
       const msg = await this.i18n.translate('customer.ERROR_REQUIRED_FIELDS', { lang });
       throw new BadRequestException(msg);
     }
@@ -108,10 +126,10 @@ export class CustomerService {
       throw new BadRequestException(msg);
     }
 
-    const existingUser = await this.userModel.findOne({ email }).exec();
+    const existingUser = await this.userModel.findOne({ email: resolvedEmail }).exec();
     if (existingUser) {
-      if (isGoogleRegistration && existingUser.googleId === googleId) {
-        return await this.login({ email, googleId, provider }, lang);
+      if (isGoogleRegistration && resolvedGoogleId && existingUser.googleId === resolvedGoogleId) {
+        return await this.login({ googleToken, email: resolvedEmail, googleId: resolvedGoogleId, provider: resolvedProvider }, lang);
       }
 
       const msg = await this.i18n.translate('customer.ERROR_EMAIL_EXISTS', { lang });
@@ -119,7 +137,7 @@ export class CustomerService {
     }
 
     const hashedPassword = password ? await bcrypt.hash(password, 10) : undefined;
-    let finalProfilePictureUrl = profilePictureUrl ?? '';
+    let finalProfilePictureUrl = resolvedProfilePictureUrl;
 
     if (profilePictureFile) {
       try {
@@ -131,15 +149,15 @@ export class CustomerService {
     }
 
     const newCustomer = await this.userModel.create({
-      email,
+      email: resolvedEmail,
       password: hashedPassword,
-      fullName,
+      fullName: resolvedFullName,
       phonenumber,
       acountnumber,
       address,
       profilePictureUrl: finalProfilePictureUrl,
-      googleId,
-      provider: provider ?? (isGoogleRegistration ? 'google' : undefined),
+      googleId: resolvedGoogleId,
+      provider: resolvedProvider ?? (isGoogleRegistration ? 'google' : undefined),
       role: UserRole.CUSTOMER,
       isActive: true,
     });
@@ -168,8 +186,19 @@ export class CustomerService {
   // ===========================================================
   async login(credentials: ICustomerLoginPayload, lang: string): Promise<ICustomerLoginResponse> {
     this.logger.log('🔑 [login] called');
-    const { email, password, googleId, provider } = credentials;
-    const isGoogleLogin = !!googleId;
+    const { email: rawEmail, password, googleId: rawGoogleId, provider, googleToken } = credentials;
+    let email = rawEmail;
+    let googleId = rawGoogleId;
+    let resolvedProvider = provider;
+
+    if (googleToken) {
+      const googleUser = await this.verifyGoogleToken(googleToken, lang);
+      email = googleUser.email;
+      googleId = googleUser.googleId;
+      resolvedProvider = 'google';
+    }
+
+    const isGoogleLogin = !!googleToken || !!googleId;
 
     const invalidMsg = await this.i18n.translate('customer.ERROR_INVALID_CREDENTIALS', { lang });
 
@@ -199,7 +228,7 @@ export class CustomerService {
     if (isGoogleLogin) {
       if (!customer.googleId) {
         customer.googleId = googleId;
-        customer.provider = provider ?? 'google';
+        customer.provider = resolvedProvider ?? 'google';
       }
     } else {
       if (!password || !customer.password) {
@@ -364,5 +393,55 @@ export class CustomerService {
   private generateToken(userId: Types.ObjectId, role: UserRole): string {
     const payload = { sub: userId, role };
     return this.jwtService.sign(payload);
+  }
+
+  private async verifyGoogleToken(
+    idToken: string,
+    lang: string,
+  ): Promise<{ googleId: string; email: string; fullName: string; profilePictureUrl: string }> {
+    const invalidMsg = await this.i18n.translate('customer.ERROR_INVALID_CREDENTIALS', { lang });
+    if (!idToken) {
+      throw new UnauthorizedException(invalidMsg);
+    }
+
+    try {
+      const response = await axios.get('https://oauth2.googleapis.com/tokeninfo', {
+        params: { id_token: idToken },
+      });
+
+      const tokenInfo = response.data as {
+        sub?: string;
+        email?: string;
+        email_verified?: string | boolean;
+        name?: string;
+        given_name?: string;
+        picture?: string;
+        aud?: string;
+      };
+
+      if (!tokenInfo.sub || !tokenInfo.email) {
+        throw new UnauthorizedException(invalidMsg);
+      }
+
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (clientId && tokenInfo.aud && tokenInfo.aud !== clientId) {
+        throw new UnauthorizedException(invalidMsg);
+      }
+
+      const emailVerified = tokenInfo.email_verified === true || tokenInfo.email_verified === 'true';
+      if (!emailVerified) {
+        throw new UnauthorizedException(invalidMsg);
+      }
+
+      return {
+        googleId: tokenInfo.sub,
+        email: tokenInfo.email,
+        fullName: tokenInfo.name ?? tokenInfo.given_name ?? tokenInfo.email.split('@')[0],
+        profilePictureUrl: tokenInfo.picture ?? '',
+      };
+    } catch (error) {
+      this.logger.warn('Google token verification failed', error as Error);
+      throw new UnauthorizedException(invalidMsg);
+    }
   }
 }

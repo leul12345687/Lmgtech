@@ -31,6 +31,16 @@
 $ npm install
 ```
 
+## Environment variables
+
+Create a `.env` file at the project root with your Google OAuth client ID for token verification:
+
+```bash
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+```
+
+For Google login/register, the frontend should send the Google `id_token` as `googleToken` in the request body.
+
 ## Compile and run the project
 
 ```bash
