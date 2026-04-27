@@ -6,7 +6,7 @@ import FormData from 'form-data';
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
-  private readonly AI_BASE_URL = 'https://ai-merchant-portal.onrender.com';
+  private readonly AI_BASE_URL = 'https://new-ai-merchant-portal-fqhw.onrender.com';
 
   constructor(private readonly httpService: HttpService) {}
 

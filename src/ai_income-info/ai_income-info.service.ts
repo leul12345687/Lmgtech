@@ -9,7 +9,7 @@ import { firstValueFrom } from 'rxjs';
 @Injectable()
 export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
-  private AI_BASE_URl: string;
+  private AI_BASE_URl!: string;
 
   constructor(private readonly httpService: HttpService) {}
 
